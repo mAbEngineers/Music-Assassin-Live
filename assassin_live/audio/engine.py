@@ -277,8 +277,21 @@ class AudioEngine:
         """False if the underlying PortAudio stream died silently — e.g. an
         uncaught callback exception or the device disappearing mid-stream
         both leave it inactive with no error surfaced, so the caller must
-        poll this rather than wait for an exception."""
-        return self._stream is not None and self._stream.active
+        poll this rather than wait for an exception.
+
+        Never raises, which is the whole point: PortAudio answers
+        Pa_IsStreamActive on a closed handle with "Invalid stream pointer"
+        rather than False, and a supervisor polling every second turns that
+        into an uncaught exception in the UI callback and takes the app down
+        with it. A pointer PortAudio will not answer for is a dead stream,
+        which is exactly what this is asked to report."""
+        if self._stream is None:
+            return False
+        try:
+            return self._stream.active
+        except Exception:  # noqa: BLE001 — sd raises PortAudioError, but a
+            # health probe that can itself fail is not a health probe.
+            return False
 
     def set_intensity(self, intensity: float) -> None:
         """Music-removal intensity: 0.0 = fully original, 1.0 = fully processed."""
@@ -382,9 +395,17 @@ class AudioEngine:
     def stop(self) -> None:
         self._running = False
         if self._stream:
-            self._stream.stop()
-            self._stream.close()
-            self._stream = None
+            # Drop the reference whatever happens. stop()/close() raise when
+            # the device is already gone — the one case a teardown has to
+            # survive — and leaving a closed handle behind is what made the
+            # next stream_ok poll throw instead of reporting the death.
+            try:
+                self._stream.stop()
+                self._stream.close()
+            except Exception:  # noqa: BLE001 — see above
+                pass
+            finally:
+                self._stream = None
         if self._worker:
             self._worker.join(timeout=2)
             self._worker = None
