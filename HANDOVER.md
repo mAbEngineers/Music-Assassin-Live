@@ -169,6 +169,9 @@ minutes of work: does the stereo rebuild bring music back (unblocked now that
 the doubling is gone), and does the mix slider blend rather than echo (B8).
 While there, read **output backlog** in `details ▸` — if it ever shows
 `SATURATED`, the drift question is answered yes and needs its own item.
+**Do it without changing model mid-session**, and then again *with* a
+switch: defect 3 below made a live switch bake in ~140 ms permanently, and
+separating that from real drift is the whole point of the reading.
 
 **4. Re-rank the models blind** through `scripts/ab_listen.sh`, not through
 the app. Every ranking so far has been sighted, and the 2026-08-20 session
@@ -297,7 +300,15 @@ the latter flagged `— SATURATED` at the 160 ms cap). If the backlog ever
 reads saturated, drift is real; if it sits low while audio sounds late, it is
 not.
 
-### Two defects found while chasing it
+**Since narrowed, 2026-08-21.** Defect 3 in the next section is a mechanism
+for permanent added delay that none of the four hypotheses above covers and
+that these readouts would not have separated from real drift: switching
+model mid-session baked in the ~140 ms cold start. If the sessions that
+sounded late were sessions where the model was changed, that is the answer
+and there is no drift to find. Read the backlog on a session with **no**
+model switch to keep the two apart.
+
+### Two defects found while chasing it (2026-08-20)
 
 **1. The app crashes on device loss — fixed 2026-08-20.**
 `sounddevice.PortAudioError: Invalid stream pointer [PaErrorCode -9988]`,
@@ -318,6 +329,80 @@ them — confirmed by stashing. **"Green on the offline suite" has therefore
 been unreliable**, and this is the test guarding the stereo rebuild and the
 19.9 ms hand-off floor — the assertions much of the reasoning above leans on.
 Worth fixing before it is trusted again.
+
+### Three more defects, from two user hypotheses — fixed 2026-08-21
+
+The user proposed two mechanisms the 2026-08-20 chase had not considered:
+switching models while the filter is on, and something that echoes and
+grows louder when the filter is switched off. Both were right, and reading
+the switch path found a third. All three are fixed on this branch, with
+`tests/test_live_model_swap.py` covering them (30 checks, hardware-free,
+in `scripts/run_tests.sh`). **None of the three was reproduced first** —
+they were found by reading, then demonstrated against the unfixed code.
+
+**3. A live model switch reset none of the state a model change invalidates.**
+`set_processor()` was three lines against the fifteen pieces of state
+`start()` resets before a model is first allowed to see audio. The new
+model inherited:
+
+  * **the old model's measured lag** (`_mask_lag`) — and `_collect_lag()`
+    only measures `if self._mask_lag is None`, so it was *never*
+    re-measured. The stereo rebuild then shaped one model's output with
+    another's mask.
+  * **the old model's alignment padding** (`_mix_pad`), still sitting in
+    `_dry_out`. The shipped spread is `gtcrn` ~25 ms to `dpdfnet_hr`
+    ~70 ms, so a switch left the dry/wet blend up to ~45 ms apart — which
+    is the echo that padding exists to remove (B8).
+  * **no `reset()` and no `_warm_up()`**. `start()` warms specifically
+    because the first inference after load takes 26 blocks (~0.5 s) for
+    `dpdfnet_hr`, and audio arriving meanwhile piles into the dry FIFO,
+    whose depth then IS the session's added latency: "cold start was
+    baking in 140 ms of permanent delay instead of 20 ms". **A live switch
+    reproduced exactly that, permanently, with nothing to work it back
+    off.** This is the best match yet for "out of sync, worse the longer it
+    runs" in a session where the model was changed.
+  * the old model's queued input and processed output, spliced on.
+
+Fixed by handing the swap to the worker thread (`_swap_runtime`), which
+owns nearly all of that state — doing it from the UI thread was a race,
+and warming there would have run the new model's first inference
+concurrently with the worker's next `feed()` on the same object. The
+callback clears its own FIFO and pad on a flag, since `_dry_out` is
+callback-thread-only. A lag measurement in flight across a swap is
+discarded by generation counter rather than applied to the wrong model.
+
+**4. Turning the filter off could leave a feedback loop running with
+nothing able to stop it.** `_tick()` had no `_busy` guard, and `_work_off()`
+runs off the Tk thread so it cannot clear `self.enabled`. Sequence:
+
+  1. `engine.stop()` sets `_stream = None` → `stream_ok` is False, but
+     `enabled` is still True and `routing.real` still set.
+  2. A 1 Hz tick lands in that window, takes the "stream died" branch and
+     calls `engine.retarget()` — **opening a fresh live stream**.
+  3. `_work_off()` continues into `routing.disable()` → `destroy_node(trap)`
+     — **the trap sink destroyed under a running instance**, which is the
+     2026-08-18 incident verbatim (`backends/pipewire.py diagnose_capture`:
+     WirePlumber re-attaches the orphaned capture to the default sink's
+     monitor, which is the sink we play into).
+  4. `_poll_transition` does `self.engine = None`, dropping the only
+     reference to a running engine. Nothing can stop it.
+  5. `_tick`'s `if self.enabled and self.engine:` is now False, so
+     `_check_capture()` — the feedback detector — never runs again.
+
+The window is the worker join plus `list_sinks`/`set_default`/`destroy_node`
+subprocess calls, roughly 0.2–0.8 s against a 1 s tick, so **this is not a
+narrow race**. Fixed with a `_busy` guard; the recovery branch also no
+longer retargets when `routing.real` is None, since recovering into an
+unknown sink is another way to end up following the default.
+
+**5. Five of `_tick()`'s exits never rescheduled the heartbeat.** It is
+armed once, in `__init__`, so the first silent stream death, retarget
+failure, `real_sink_lost`, `trap_lost` or detected feedback loop ended
+supervision for the life of the process — including across a later
+switch-on. Worst of the five was the `_check_capture()` exit: **the first
+feedback loop turned the app off and disabled the only thing that can catch
+the second.** `_tick` is now a wrapper that reschedules in a `finally`
+around `_tick_body`, so no exit — or exception — can skip it.
 
 ### One finding deliberately not acted on
 
@@ -553,6 +638,33 @@ Use `~/Documents/venvs/assassin_venv_v0.4.4_cpu/bin/python` (1.13.4). Models
 come from `Music-Assassin/models/sherpa_onnx/sherpa-onnx-spleeter-2stems-int8/`
 (2 × 26 MB — note the `sherpa_onnx/` path component); `scripts/import_models.py`
 now copies them in under the names the registry looks up.
+
+## What landed 2026-08-21
+
+Three defects behind the user's two hypotheses — live model switching, and
+an echo that grows after switching off. Written up in full under "Three
+more defects" above; in short:
+
+- **`set_processor()` now resets what a model change invalidates.** The
+  swap moved to the worker thread (`_swap_runtime`), which owns the state;
+  the new model is warmed before it goes live, the old model's measured
+  lag and alignment pad are dropped and re-measured, and its queued and
+  processed audio is discarded rather than spliced. A lag measurement
+  racing the swap is invalidated by generation counter.
+- **The supervisor no longer acts during a transition** (`_busy` guard),
+  which closes a 0.2–0.8 s window in which turning the filter off could
+  open a fresh stream and then have the trap sink destroyed underneath it
+  — the 2026-08-18 feedback loop, with the engine reference dropped
+  immediately after so nothing could stop it.
+- **The 1 Hz heartbeat can no longer stop itself.** Five exits returned
+  without rescheduling and it is armed only once; the worst was the
+  feedback detector's own exit. `_tick` now reschedules in a `finally`.
+- **`tests/test_live_model_swap.py`** — 30 checks, no Tk/audio/PipeWire,
+  registered in `scripts/run_tests.sh`. Each defect was demonstrated
+  against the unfixed code before the fix went in.
+
+Not reproduced by ear yet: all three were found by reading the switch path.
+The by-ear confirmation is folded into next-step 3.
 
 ## What landed 2026-08-20 (third session)
 
