@@ -7,26 +7,31 @@ measured findings and the list of dead ends all live in
 
 ## Where the code is
 
-**Nothing is pushed, and the 0.1.4 tag is still not cut.**
+**Both feature branches are pushed as of 2026-08-20. The 0.1.4 tag is still
+not cut.**
 
 | Branch | Contents | State |
 |---|---|---|
-| `main` | 0.1.4, green on the offline suite | at `8df4f83` |
-| `feature/stereo-output` | B3 stereo rebuild, `wants_stereo`, C1, C2, C3, C4, C7, C8, E1 | **13 commits, unpushed** |
-| `feat/separator-spike` | A1 spike + the SpleeterProcessor and its sweep, then B6/B7/C9, then B8/B6b/C10 and the C11 panel rebuild | **17 commits, off the above** |
+| `main` | 0.1.4, green on the offline suite | **25 commits unpushed** |
+| `feature/stereo-output` | B3 stereo rebuild, `wants_stereo`, C1, C2, C3, C4, C7, C8, E1 | **pushed**, 38 ahead of `origin/main` |
+| `feat/separator-spike` | A1 spike + the SpleeterProcessor and its sweep, then B6/B7/C9, then B8/B6b/C10, the C11 panel rebuild, and the 2026-08-20 work below | **pushed**, 58 ahead; contains `feature/stereo-output` |
 | `feature/windows-packaging` | installer scaffolding | ~25 commits stale; cherry-pick forward, never merge (D3.1) |
 
-**55 commits ahead of `origin/main`**, which is still at `06f0ac8`
-(verified live — nothing has moved on the remote). Pushing needs a machine
-with credentials; the sessions so far had none (`gh` installed but not
-logged in, no credential helper). Push the parent branch first, or its
-commits arrive with no branch name on them:
+`origin/main` is **still at `06f0ac8`** and no tags have moved — the last
+published release is **v0.1.3**. `main` itself has never been pushed, so the
+25 commits on it reach the remote only through the two feature branches.
 
-```
-gh auth login
-git push -u origin feature/stereo-output
-git push -u origin feat/separator-spike
-```
+**CI ran for the first time and passed on both branches**, with no fix-up
+needed to the apt/pip step. Read what green means before trusting it: the
+seven hardware-free tests run, but both model tests report `SKIPPED (models
+not installed)` because the ONNX files are not in the repo. CI covers
+routing, recovery, the status line and capture diagnosis; it exercises **no
+processor at all**. And see the flaky-test note under the tag gates —
+`test_stereo_rebuild` fails intermittently, so a green run is not proof.
+
+Credentials now exist on the dev machine (`gh auth login` + `gh auth
+setup-git`, as `A-Ahmad-02`). Push the parent branch first, or the commits
+arrive with no branch name on them.
 
 **`git commit -m` and `-F` fail in this checkout** — `fatal: could not read
 commit message: No such file or directory`. It is not the message: git
@@ -35,21 +40,47 @@ mount. It worked earlier the same day and then stopped, so it is the mount,
 not the repo. The workaround that does work is `git commit-tree` +
 `git update-ref`; committing from the machine that owns the repo avoids it.
 
-That first push is also the **first exercise of the new CI workflow**
-(`.github/workflows/tests.yml`). Expect a possible iteration on the apt/pip
-step; it has never run.
+**The `.deb` cannot be built over the gvfs mount either**, and the errors
+point nowhere near packaging. PyInstaller's `--add-data` rejects any source
+path containing a colon, which every gvfs mount point has
+(`sftp:host=...`), and `objcopy` fails with "Operation not supported"
+rewriting ELF sections on the mount. `scripts/build_deb.sh` now takes
+`BUILD_DIR` from the environment so the scratch tree can live on local disk,
+accepts `ffmpeg` when ImageMagick is absent, and invokes PyInstaller as
+`python -m` so a venv created at another path still works. Build it with a
+colon-free path to the checkout (a symlink is enough):
+
+```
+BUILD_DIR=/tmp/ma-build /path/without/colons/scripts/build_deb.sh
+```
 
 ## What gates the 0.1.4 tag
 
-**Everything left needs ears, not code.** Four defects were reported from the
-first real run (2026-08-19, from the repo: `.venv/bin/python -m
-assassin_live` — not the `.deb`, which is still `main`); three were fixed
-that day and the fourth, the dry/wet skew, was fixed the next. The panel was
-then rebuilt (C11) and has been seen running, so the layout is not
-speculative — but **none of the three audio fixes has been confirmed by
-ear**, and that is what the tag is waiting on:
+**Updated 2026-08-20 after a second listening session.** One gate closed, one
+symptom turned out to be misread, and two real defects surfaced while chasing
+it. Current state of the four:
 
-**1. Doubling still reported with the stereo rebuild on `dpdfnet_hr`.**
+| gate | state |
+|---|---|
+| 1. Doubling with the stereo rebuild on `dpdfnet_hr` | **CLOSED** — confirmed gone by ear, 2026-08-20 |
+| 2. Audio sometimes silent from idle | **not reproduced**; what reproduces is *late*, which B7 explains, plus total suppression (below) |
+| 3. Does the rebuild bring music back | **unblocked by 1, still unanswered** |
+| 4. Does the mix slider blend rather than echo (B8) | **still unanswered** |
+
+**The new blocker is not in this list.** A `.deb` of 0.1.4 was built and
+verified on 2026-08-20 (package well-formed, four models bundled,
+`speechdenoiser` correctly excluded, binary answers `--help`) and is sitting
+in `dist/` unreleased. What stops it shipping now is the suppression defect
+in "the lip-sync reports were three different things" below, plus a test that
+cannot be trusted to tell you the suite is green.
+
+The original four defects, for context — reported from the first real run
+(2026-08-19, from the repo, not the `.deb`); three were fixed that day and
+the fourth, the dry/wet skew, the next:
+
+**1. Doubling with the stereo rebuild on `dpdfnet_hr` — RESOLVED 2026-08-20.**
+Confirmed gone by ear in the app. The text below is kept because the
+readings it describes are still the right ones to quote if it returns.
 B6's fix is confirmed working on `dtln` (8 ms lag) and in the offline
 regression test with a processor lagging 2400 samples, which the estimator
 measures to 0.1 ms. So the mechanism is right and something about
@@ -119,19 +150,32 @@ producing candidates to compare with it.
 
 ## What to do next
 
-In order. The first two are yours; the rest is work waiting on them.
+Reordered 2026-08-20. The first three come out of the listening session and
+displace what used to be first here.
 
-**1. Listen to what landed.** Three fixes are green in tests and unheard:
-the mix alignment (B8), the estimator hardening (B6b), and whether the
-stereo rebuild still doubles on `dpdfnet_hr`. Fifteen minutes with the app
-answers all three, and the readouts to quote are on the status bar.
+**1. Fix the flaky `test_stereo_rebuild`.** Cheapest item on the list and it
+gates the credibility of everything else: while it fails intermittently, no
+suite run proves anything, including the ones the tag would be cut on.
 
-**2. Re-rank the models blind** through `scripts/ab_listen.sh`, not through
-the app. The current ranking is confounded: the same listener rated `dtln`
-worse before B6 and better after, which is what a 50 ms-misaligned mask
-would do to every model at once.
+**2. B10 — normalise what the model is fed.** Promoted from "measurement
+hygiene" to a shipping defect: a quiet source into `dpdfnet` produced
+`input −37.3 dB / output −87.4 dB`, i.e. total suppression, and there is
+still no input trim anywhere in the chain. A slow AGC ahead of the model with
+the inverse gain after it is a small, testable change, and the sweep is
+already specified in ROADMAP B10.
 
-**3. B4 — constrain the mask in time.** The next quality lever, and the
+**3. Finish the by-ear gates that are still open.** Two remain and both are
+minutes of work: does the stereo rebuild bring music back (unblocked now that
+the doubling is gone), and does the mix slider blend rather than echo (B8).
+While there, read **output backlog** in `details ▸` — if it ever shows
+`SATURATED`, the drift question is answered yes and needs its own item.
+
+**4. Re-rank the models blind** through `scripts/ab_listen.sh`, not through
+the app. Every ranking so far has been sighted, and the 2026-08-20 session
+placed `dpdfnet` third despite it being the only net-harmful model — which is
+the kind of error a blind test exists to catch.
+
+**5. B4 — constrain the mask in time.** The next quality lever, and the
 first one aimed squarely at the standing complaint ("it still misses some
 audio"). `vocal-loss` fires 36/104 and `pumping` 38/104 and they are the same
 defect from two sides: a gain that collapses faster than a syllable. The
@@ -142,14 +186,14 @@ parameters (`release_ms`, `attack_ms`, `floor_db`), swept over the corpus and
 judged on the *tags* rather than dSI-SDR, which scores this backwards. Full
 design in ROADMAP B4. No longer blocked on Q1.
 
-**4. B9 — give the top octave back.** The measured damage is concentrated
+**6. B9 — give the top octave back.** The measured damage is concentrated
 there: whole-corpus per-band vocal loss runs −4.8 / −4.3 / −7.0 / −8.6 /
 **−9.1** dB from sub to air, and −13.0 in the air band on `male_lead`.
 Blending dry back above a 6–8 kHz crossover is one crossover and one gain,
 and `band_damage` measures it directly. 48 kHz models only — `dtln` and
 `gtcrn` have nothing up there to restore.
 
-**5. C12 — expose what 3 and 4 add.** Suppression floor and smoothing as
+**7. C12 — expose what 5 and 6 add.** Suppression floor and smoothing as
 sliders that work on every model (today only `speechdenoiser` has a limit),
 "keep air above N kHz", and then presets — `voice first` / `balanced` /
 `music first` — which is how the standing product judgement becomes
@@ -157,13 +201,14 @@ something a user can state. Right now the only way to say "protect the
 voice" is to pull a mix fader that also changes the output level. The panel
 has room for all of it since C11.
 
-**6. B10 — normalise the model's input level.** `dpdfnet_hr` is
-level-dependent (§2.1) and nothing in the chain trims the input, so quality
-depends on how hot the source is mastered. It may also be the missing
-explanation for E2's unaccounted 34 dB swing.
+B10 is **item 2**, not last — it was promoted on 2026-08-20 when it stopped
+being a measurement caveat and started silencing a listener's audio. Its
+other claim still stands: it may also be the missing explanation for E2's
+unaccounted 34 dB swing.
 
-Everything above is measurable offline before anyone listens, which is the
-order that has worked so far: sweep, then ears, then ship.
+Items 5–7 are measurable offline before anyone listens, which is the order
+that has worked so far: sweep, then ears, then ship. Items 1–4 are not — they
+are the ones that need the app, the ears and a working test.
 
 ## Windows — planned 2026-08-20, not started
 
@@ -195,13 +240,103 @@ path makes bundling unnecessary.
 
 Start at D3.1. Nothing here needs a Windows machine until D3.3.
 
+## The by-ear results (2026-08-20) — read this before the 2026-08-19 set
+
+**Sighted, not blind**, and through the app rather than `scripts/ab_listen.sh`,
+so expectation bias is in it. The blind re-rank is still owed.
+
+| finding | what the numbers say |
+|---|---|
+| stereo rebuild no longer doubles | gate 1 closed |
+| `dpdfnet_hr` cuts a lot of vocals | matches: `vocal_ret` −5.0 dB, worst of four; `vocal-loss` 36/104 |
+| `dtln` also cuts some vocals **and lets musical notes through** | matches: −20.6 dB music left vs −46.1; the largest single spread in the table |
+| `gtcrn` has noise artifacts *and* cuts vocals; clearly worst | matches SAR 3.59, `artifacts` 47/104, `pumping` 49/104 — **not** its `musNoise` of −20, which is the hollow-spectrum trap the README documents |
+| `dpdfnet` rated third, "no noise elements" | **conflicts with the data** — it is the only net-harmful model (dSI-SDR −0.28) with the worst artifact profile of anything tested (SAR 0.27, `artifacts` 73/104). Treat this placing as unreliable |
+
+**No default change is justified by this session.** Neither `dtln` nor
+`dpdfnet_hr` dominates the other — `dtln` wins vocal retention and latency,
+`dpdfnet_hr` wins music suppression, SAR and musical noise, so both sit on
+the Pareto frontier and the harness correctly declines to rank them. What the
+session actually establishes is that **both frontier models audibly cut
+vocals**, which makes the binding constraint the model *class* rather than the
+model choice. That is an argument for B4 (which attacks vocal damage on every
+model at once) over more A/B.
+
+### The "lip sync" reports were three different things
+
+Reported as: audio behind video, worse the longer it runs, with the audio
+stopping for seconds at a time. Chased in order, each ruled out by
+measurement rather than argument:
+
+1. **Not the resampler.** The three 16 kHz models pay a 48k→16k→48k
+   round-trip that `dpdfnet_hr` skips, so it was the obvious suspect.
+   Measured at **0.00 ms at every soxr quality** — `ResampleStream`
+   compensates its own delay.
+2. **Not model latency.** The complaint is identical on all four, and the
+   spread between them is large (`gtcrn` ~25 ms, `dpdfnet_hr` ~70 ms). If a
+   45 ms spread is inaudible while the fault is obvious, the dominant term is
+   model-independent.
+3. **Not starvation or stream death.** The panel during a bad moment read
+   **xruns 0, fallbacks 17 of 36781 blocks**, worker 3.9 ms against a 20 ms
+   budget. A three-second stall alone would log ~150 fallbacks.
+4. **What the panel actually showed: `input −37.3 dB, output −87.4 dB`** on
+   `dpdfnet` at **166 % mix**. Signal in, silence out — the model deleting
+   everything, not a timing fault. Three things stacked: the only
+   net-harmful model, a very quiet source (**B10** — the models are
+   level-dependent and nothing trims the input), and a mix past 100 % so no
+   dry signal remains underneath to cover what the model removes.
+
+**So B10 is no longer a theory about measurement conditions — it is a
+user-visible defect.** It should move up the queue accordingly.
+
+**Still open:** whether anything genuinely drifts. `latency_ms` cannot answer
+it — that number reads `_dry_out`, which only grows when wet is *starved*,
+while a pipeline running *ahead* backs up in `_out` and reports nothing. Two
+readouts were added for exactly this (**added latency**, **output backlog**,
+the latter flagged `— SATURATED` at the 160 ms cap). If the backlog ever
+reads saturated, drift is real; if it sits low while audio sounds late, it is
+not.
+
+### Two defects found while chasing it
+
+**1. The app crashes on device loss — fixed 2026-08-20.**
+`sounddevice.PortAudioError: Invalid stream pointer [PaErrorCode -9988]`,
+raised from `stream_ok`. `stop()` called `self._stream.stop()` and `close()`
+unguarded, so when the device was already gone — the one case a teardown has
+to survive — it raised, and `self._stream = None` never ran. The dead handle
+stayed referenced; the 1 Hz supervisor polled `stream_ok`; PortAudio answered
+"invalid pointer" instead of `False`; that exception landed in the Tk
+callback and took the app down. `stream_ok` can no longer raise, and `stop()`
+clears the reference in a `finally`. Verified against a simulated dead
+stream.
+
+**2. `tests/test_stereo_rebuild.py` is FLAKY.** It failed three separate runs
+with *different* assertions each time (`set_stereo(True) restores the
+surviving image`, `engine default is still the measured-mono behaviour`, the
+latency-floor assertions) and passed others, with no code change between
+them — confirmed by stashing. **"Green on the offline suite" has therefore
+been unreliable**, and this is the test guarding the stereo rebuild and the
+19.9 ms hand-off floor — the assertions much of the reasoning above leans on.
+Worth fixing before it is trusted again.
+
+### One finding deliberately not acted on
+
+`sd.Stream` is constructed with **no `latency=` argument**, so sounddevice's
+default of `'high'` applies. Measured on the reporter's hardware: **34.8 ms
+in + 34.8 ms out**, against 8.7 + 8.7 at `'low'` — roughly 70 ms of device
+buffering that C7's number excludes *by design*, so nothing has ever
+reported it. Switching to `'low'` was considered and rejected for now: lower
+buffering means less tolerance for scheduling jitter, and with the
+stream-death question still open it could make things worse. Revisit once
+the suppression defect and the drift question are settled.
+
 ## The by-ear results so far (2026-08-19)
 
 | finding | status |
 |---|---|
 | `dtln` leaves audible music noise and sounds muffled | matches the numbers: −20.6 dB music left vs `dpdfnet_hr`'s −46.1, and an air band at −59.7 dB (it is 16 kHz-native) |
 | `dpdfnet_hr` drops vocals more, but leaves no music noise | matches: `vocal-loss` 36/104 pairs, `music_supp` −46.1 dB |
-| stereo rebuild doubled the audio | **B6 fixed** — confirmed gone on `dtln`, but **still reported on `dpdfnet_hr`**, see open items |
+| stereo rebuild doubled the audio | **B6 fixed** — confirmed gone on `dtln`, and on `dpdfnet_hr` too as of 2026-08-20 |
 | starting from idle came up late / out of sync | **B7, fixed** |
 | the ON/OFF button gave no feedback and re-clicking reversed it | **C9, fixed** |
 
@@ -209,7 +344,10 @@ Start at D3.1. Nothing here needs a Windows machine until D3.3.
 and delete everything above 8 kHz, which is disqualifying for anyone who
 notices it — so the choice was never really three-way.
 
-**But treat the model ranking as provisional.** After B6 was fixed the same
+**Superseded 2026-08-20**, which found all four models cutting vocals and
+neither frontier model dominating — see the section above.
+
+**Treat every model ranking as provisional.** After B6 was fixed the same
 listener reported `dtln` with "better audio retention and much less music
 noise", which is a different judgement from the first pass. If the stereo
 toggle was on during that first comparison, it ran through a mask 50 ms out
@@ -416,6 +554,33 @@ come from `Music-Assassin/models/sherpa_onnx/sherpa-onnx-spleeter-2stems-int8/`
 (2 × 26 MB — note the `sherpa_onnx/` path component); `scripts/import_models.py`
 now copies them in under the names the registry looks up.
 
+## What landed 2026-08-20 (third session)
+
+- **Both feature branches pushed**, CI exercised for the first time and green
+  on both (see "Where the code is" for what green does and does not cover).
+- **README gained a "Measuring quality" section** — every quantity the
+  harness reports, in plain terms, plus the four reference points, the
+  failure tags, and the whole-corpus results for all four benchmarked models
+  (headline numbers, per-band vocal damage, per-model tag counts), pulled
+  from the B1 run's CSVs rather than restated from the roadmap. Two
+  corrections came out of checking those numbers: per-band damage on
+  `dpdfnet_hr` is **nearly** double bottom-to-top, not "more than double" as
+  ROADMAP B9 still says (−4.8 → −9.1 dB whole-corpus, −8.1 → −13.0 on
+  `male_lead`), and `dtln`'s vocal advantage over the next best is ~2.6×, not
+  3×. It also records that **`speechdenoiser` has never been benchmarked** —
+  it is in the model table but in no sweep.
+- **`scripts/build_deb.sh` made portable** (ffmpeg fallback for icons,
+  `python -m PyInstaller`, overridable `BUILD_DIR`), and **0.1.4 built and
+  verified** — package well-formed, four redistributable models bundled,
+  `speechdenoiser` excluded, eight icon sizes, binary answers `--help`. It is
+  in `dist/`, unreleased.
+- **Crash on device loss fixed** — `stream_ok` can no longer raise and
+  `stop()` always clears the stream reference. See the by-ear section.
+- **Two readouts added to `details ▸`**: `added latency` (the engine's own
+  measured figure, previously only on the status bar) and `output backlog`,
+  which is the `_out` depth — the blind spot `latency_ms` structurally cannot
+  see, flagged `— SATURATED` at the 160 ms cap.
+
 ## What landed 2026-08-19/20 (UI)
 
 - **C11** — the control panel is a 680 × 430 two-column window: capsule
@@ -526,6 +691,13 @@ Full list in ROADMAP §10. Live ones:
   clips. The corpus proves the rebuild works but cannot show it failing
   gracefully (median S/M −8.2 dB, nothing hard-panned).
   `bench_quality.py` already reserves the category name `stereo_torture`.
+- **Answered 2026-08-20:** the stereo rebuild no longer doubles, and the
+  "lip sync" family of reports resolved to total suppression on a
+  net-harmful model rather than any timing fault (see the by-ear section).
+- **New, and it needs one reading, not a discussion:** does `output backlog`
+  in `details ▸` ever show `SATURATED`? That single word decides whether the
+  pipeline genuinely drifts or whether every remaining sync complaint is the
+  suppression defect wearing a disguise.
 - **Q1** no longer blocks B4 — the tag counts are reason enough to build it
   and the sweep decides whether it ships. The answer still shapes what a
   listener should be checking for when candidates exist.
@@ -539,6 +711,10 @@ Full list in ROADMAP §10. Live ones:
 
 - Run the suite with `./scripts/run_tests.sh` — seven hardware-free files
   (~10 s), plus the model benchmark (~80 s) when the ONNX files are present.
+- **`tests/test_stereo_rebuild.py` is flaky** (found 2026-08-20) — it fails
+  intermittently with different assertions each run and no code change
+  between them. Until that is fixed, re-run the suite before believing a
+  failure *or* a pass.
 - **`tests/test_routing_dry.py` is not hardware-free** despite its name and is
   deliberately excluded from the runner. It destroys every sink named
   `MusicAssassin`; on 2026-08-18 it did that to a running instance, and

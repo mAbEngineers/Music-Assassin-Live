@@ -244,6 +244,23 @@ class AudioEngine:
         return 1000.0 * max(0.0, self._lag_ema - self._mix_pad) / SAMPLE_RATE
 
     @property
+    def output_backlog_ms(self) -> float:
+        """Processed audio sitting in `_out` waiting to be emitted, in ms.
+
+        The blind spot in `latency_ms`. That number reads `_dry_out`, which
+        only grows when wet is *starved*; when the worker instead runs ahead
+        of the callback, `_out` backs up, every extra sample in it is delay a
+        listener hears, and `_dry_out` stays flat because the callback still
+        drains a whole block each time. So a pipeline can drift steadily
+        later while the reported latency does not move at all.
+
+        Pinned at `_max_out` (160 ms) means it is saturated and
+        `_work()` is discarding the oldest audio to stay under the cap —
+        which is both the worst case for delay and audible as a skip.
+        """
+        return 1000.0 * len(self._out) / SAMPLE_RATE
+
+    @property
     def processor_lag_ms(self) -> float | None:
         """How far the processor's output trails its input, in ms, or None
         while it is still being measured or if it never could be."""

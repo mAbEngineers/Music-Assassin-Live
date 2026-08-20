@@ -919,6 +919,19 @@ class App:
             return "unmeasured (rebuild bypassed)"
         return "measuring…"
 
+    def _backlog_text(self) -> str:
+        """Depth of the wet FIFO, flagged when it saturates.
+
+        `latency_ms` cannot see this queue (see AudioEngine), so a pipeline
+        drifting later shows up here and nowhere else. At the 160 ms cap the
+        engine is dropping the oldest audio to keep up, so the word matters
+        more than the number.
+        """
+        if self.engine is None:
+            return "—"
+        ms = self.engine.output_backlog_ms
+        return f"{ms:.0f} ms" + (" — SATURATED" if ms >= 155.0 else "")
+
     @staticmethod
     def _level_db(levels: list) -> str:
         """Most recent RMS as dBFS. Silence reads as a floor, not as
@@ -1143,6 +1156,8 @@ class App:
                         ("model", self.model.get()),
                         ("worker", f"{s.worker_ms_avg:.1f} ms/block  (20 ms budget)"),
                         ("processor lag", self._lag_text()),
+                        ("added latency", f"{self.engine.latency_ms:.0f} ms"),
+                        ("output backlog", self._backlog_text()),
                         ("stereo", "on" if self.stereo_enabled else "off"),
                         ("mix", f"{round(self.mix_pct)} %"),
                         ("input", self._level_db(self.engine.recent_input_levels())),

@@ -801,8 +801,9 @@ the tag counts justify building it, and the sweep decides whether it ships.
 Whole-corpus per-band vocal damage for `dpdfnet_hr`, sub/low/mid/high/air:
 **−4.8 / −4.3 / −7.0 / −8.6 / −9.1 dB**. On `male_lead`, where it is worst:
 −8.1 / −7.3 / −11.3 / −11.7 / **−13.0**. The damage is not spread evenly —
-it more than doubles from the bottom band to the top, and `hf-loss` fires
-28/104 with `hf-loss-4k` 30/104.
+it nearly doubles from the bottom band to the top (1.9x whole-corpus, 1.6x
+on `male_lead` — corrected 2026-08-20, this was overstated as "more than
+double"), and `hf-loss` fires 28/104 with `hf-loss-4k` 30/104.
 
 So: blend dry back above a crossover, at a chosen amount. Above ~6–8 kHz
 music is mostly cymbals and air rather than the pitched content that makes a
