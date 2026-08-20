@@ -28,6 +28,7 @@ HARDWARE_FREE=(
   test_stereo_rebuild       # B3's mask rebuild + measured latency (C4/C7)
   test_capture_diagnosis    # C8, incl. the pulse-proxied pid trap
   test_retarget_live        # C1's live move and its fallbacks
+  test_live_model_swap      # live model switch + the supervision heartbeat
   test_routing_events       # check()'s four outcomes (C1/C3)
   test_status_line          # C4's health word
   test_volume_mirror        # C2's mirror

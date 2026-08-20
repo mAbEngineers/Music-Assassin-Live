@@ -1059,6 +1059,37 @@ class App:
 
     # -- supervision -------------------------------------------------------------
     def _tick(self):
+        """Supervision heartbeat. Reschedules in a finally, always.
+
+        Five of _tick_body's exits used to return without rescheduling, so
+        the first silent stream death, lost sink, lost trap or detected
+        feedback loop ended supervision for the life of the process --
+        including across a later switch-on, since the loop is only armed
+        once, in __init__. Worst of the five was the _check_capture() exit
+        -- the feedback detector itself -- so the first loop both turned
+        the app off and disabled the only thing that can catch the next.
+
+        Rescheduling here rather than at each exit makes that structurally
+        impossible, and covers an exception out of the body as well.
+        """
+        try:
+            self._tick_body()
+        finally:
+            self.root.after(1000, self._tick)
+
+    def _tick_body(self):
+        # Not while a transition is in flight. _work_on/_work_off run off
+        # the Tk thread and cannot clear self.enabled themselves, so during
+        # a stop this method would otherwise see enabled=True, an engine
+        # whose stream is already closed, and "recover" it -- opening a
+        # fresh stream that routing.disable() then destroys the trap sink
+        # underneath. That is the 2026-08-18 feedback loop exactly (see
+        # backends/pipewire.py diagnose_capture), and _poll_transition
+        # drops the engine reference immediately afterwards, so nothing is
+        # left that can stop it. _busy is set and cleared on this thread,
+        # so the check is a plain read.
+        if self._busy:
+            return
         if self.enabled and self.engine:
             if not self.engine.stream_ok:
                 # PortAudio stream died silently (uncaught callback
@@ -1066,6 +1097,14 @@ class App:
                 # otherwise keep showing "on" with no audio flowing until
                 # manually toggled. Try the same recovery as a real
                 # sink change; only give up and turn off if that fails too.
+                if self.routing.real is None:
+                    # Nothing to retarget onto. Recovering into an unknown
+                    # sink is how a stream ends up following the default,
+                    # which while the trap is installed is a feedback loop.
+                    self._turn_off()
+                    self._say("audio stream died and no output is available "
+                              "— turned off", RED)
+                    return
                 try:
                     self.engine.retarget(self.routing.monitor_source,
                                          self.routing.real.name)
@@ -1106,7 +1145,6 @@ class App:
                 self._say(f"output → {label}" if chosen
                           else f"previous output disappeared — now on {label}",
                           SUBTEXT if chosen else AMBER)
-                self.root.after(1000, self._tick)
                 return
             elif event == "real_sink_lost":
                 self._turn_off()
@@ -1169,7 +1207,6 @@ class App:
             self._say("idle", hold=False)
             self.details.config(text="")
         self._refresh_outputs()
-        self.root.after(1000, self._tick)
 
     def _quit(self):
         self._save_settings()

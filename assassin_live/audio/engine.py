@@ -156,6 +156,18 @@ class AudioEngine:
         self._bandlimit_enabled = True  # safety hygiene filter — on by default
         self._atten_limit_db = 0.0  # forwarded to the processor if it supports one
 
+        # A model swap asked for from another thread. The worker installs
+        # it (see set_processor/_swap_runtime) so that nothing the worker
+        # owns is mutated underneath it mid-block.
+        self._pending_runtime: StreamProcessor | None = None
+        # Set by the worker once a swap is installed, consumed by the
+        # callback: _dry_out and _mix_pad belong to the callback thread and
+        # so have to be cleared by it.
+        self._fifo_reset_pending = False
+        # Bumped on every swap, so a lag measurement still in flight when
+        # the model changes cannot apply its answer to the new one.
+        self._lag_gen = 0
+
         # (processor, downsampler, upsampler) swapped as one unit so the
         # worker thread never reads a processor paired with the wrong
         # resamplers mid-switch
@@ -209,9 +221,25 @@ class AudioEngine:
 
     # -- control -------------------------------------------------------------
     def set_processor(self, processor: StreamProcessor) -> None:
-        """Hot-swap the model/pipeline while the stream keeps running."""
-        self._runtime = self._build_runtime(processor)
-        self._apply_atten_limit()
+        """Hot-swap the model/pipeline while the stream keeps running.
+
+        Handed to the worker rather than done here. The caller is the UI
+        thread, and nearly everything a swap has to reset -- the processor,
+        its resamplers, the band-limit IIRs, the mid/side downmix, the
+        stereo rebuild, _dry_work -- is read and written by the worker on
+        every block. Replacing it from another thread races that, and
+        warming the new model here would run its first inference
+        concurrently with the worker's next feed() on the same object.
+
+        _swap_runtime has what the swap must actually do, and why each
+        piece of it is not optional. With no stream running there is no
+        worker to defer to and nothing to race, so it happens inline.
+        """
+        if not self._running:
+            self._runtime = self._build_runtime(processor)
+            self._apply_atten_limit()
+            return
+        self._pending_runtime = processor
 
     def set_atten_limit(self, db: float) -> None:
         """Suppression-strength ceiling, for processors that expose one
@@ -443,6 +471,9 @@ class AudioEngine:
         self._mix_pad = 0
         self._lag_given_up = False
         self._measuring = False
+        self._pending_runtime = None
+        self._fifo_reset_pending = False
+        self._lag_gen += 1
         self._wet_gain = 0.0
 
     def retarget(self, monitor_source: str, sink_name: str) -> None:
@@ -497,6 +528,16 @@ class AudioEngine:
         # what makes the mix a blend rather than a blend with an echo in it
         # — below 100 % the two sides were 50 ms apart on dpdfnet_hr.
         # Costs one dry gap of that length, once, at stream start.
+        # A swap completed on the worker thread. Only this thread may touch
+        # _dry_out, so its reset lands here: the FIFO holds audio the old
+        # model was aligned to plus that model's alignment pad, and carrying
+        # either forward is precisely the misalignment the pad exists to
+        # prevent.
+        if self._fifo_reset_pending:
+            self._fifo_reset_pending = False
+            self._dry_out = np.zeros((0, 2), dtype=np.float32)
+            self._mix_pad = 0
+            self._lag_ema = 0.0
         pad = self._mix_pad_pending
         if pad is not None:
             self._mix_pad_pending = None
@@ -567,8 +608,64 @@ class AudioEngine:
         self._levels.append(float(np.sqrt(np.mean(np.square(outdata)))))
         self._levels_in.append(float(np.sqrt(np.mean(np.square(indata)))))
 
+    def _swap_runtime(self, processor: StreamProcessor) -> None:
+        """Install a new model. Worker thread only — see set_processor.
+
+        A live model change is a cold start that happens to occur
+        mid-stream, so everything start() resets before a model is first
+        allowed to see audio has to be reset here as well:
+
+          * The new processor is warmed before it goes live. The first
+            inference after load is slow -- 26 blocks (~0.5 s) for
+            dpdfnet_hr against 1 block once hot -- and audio arriving
+            during it piles up in the dry FIFO, whose depth then IS the
+            session's added latency. Warming costs a moment of dry
+            passthrough; not warming baked in ~140 ms for the rest of the
+            session, permanently, with nothing to work it back off.
+
+          * The measured lag belongs to the model it was measured on, and
+            the spread across shipped models is large (gtcrn ~25 ms,
+            dpdfnet_hr ~70 ms). Keeping it means the stereo rebuild shapes
+            one model's output with another's mask, and the mix blends dry
+            against wet up to ~45 ms apart -- which is the echo the
+            padding exists to remove. Re-measure rather than carry it.
+
+          * The old model's queued and processed audio is dropped rather
+            than spliced onto the front of the new model's first output.
+        """
+        self._runtime = self._build_runtime(processor)
+        self._apply_atten_limit()
+        self._warm_up()
+        # worker-owned DSP state, all of it specific to the model that just
+        # left: stateful IIRs, the mid/side downmix, the rebuild's history.
+        self._midside.reset()
+        self._bandlimit.reset()
+        self._bandlimit_r.reset()
+        self._stereo.reset()
+        self._dry_work = np.zeros((0, 2), dtype=np.float32)
+        self._lag_gen += 1          # invalidates any measurement in flight
+        self._lag_est = LagEstimator(SAMPLE_RATE)
+        self._mask_lag = None
+        self._pending_lag = None
+        self._mix_pad_pending = None
+        self._lag_given_up = False
+        self._measuring = False
+        with self._in_q.mutex:
+            self._in_q.queue.clear()
+        with self._lock:
+            self._out = np.zeros((0, 2), dtype=np.float32)
+        # _dry_out and _mix_pad are the callback's; it clears them on its
+        # next block. That is also what drops the old model's alignment
+        # padding, rather than leaving it to delay the new model's dry side
+        # by a correction measured for a different pipeline.
+        self._fifo_reset_pending = True
+
     def _work(self) -> None:
         while self._running:
+            pending = self._pending_runtime
+            if pending is not None:
+                self._pending_runtime = None
+                self._swap_runtime(pending)
             try:
                 block = self._in_q.get(timeout=0.2)
             except queue.Empty:
@@ -669,12 +766,23 @@ class AudioEngine:
 
         d, w = self._lag_est.take_window()
         self._measuring = True
+        gen = self._lag_gen
+        # Bound now, not read inside run(). A swap installs a fresh
+        # estimator, so a late read would hand this window to the new
+        # model's estimator — harmless (measure() is pure) but it makes the
+        # thread's subject depend on when it happened to be scheduled.
+        est = self._lag_est
 
         def run():
             try:
-                lag = self._lag_est.measure(d, w)
+                lag = est.measure(d, w)
             except Exception:  # noqa: BLE001 — a failed measurement just
                 lag = None     # means another window, never a dead stream
+            if gen != self._lag_gen:
+                # The model was swapped while this ran. The answer describes
+                # a processor that is no longer installed, and the swap has
+                # already cleared _measuring — touch neither.
+                return
             if lag is not None:
                 self._pending_lag = lag
             self._measuring = False
