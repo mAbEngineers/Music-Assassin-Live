@@ -173,6 +173,14 @@ While there, read **output backlog** in `details ▸` — if it ever shows
 switch: defect 3 below made a live switch bake in ~140 ms permanently, and
 separating that from real drift is the whole point of the reading.
 
+The two latency changes need the same pass, and neither has run on hardware:
+
+| readout | what to check |
+|---|---|
+| `device buffer` | should now read ~8.7 + 8.7 ms, not 34.8 + 34.8. If `xruns` leaves 0, `'low'` holds; if it does not, `STREAM_LATENCY` goes back to `'high'` |
+| `added latency` | should start near the model's own lag and **stay** there over 20+ minutes, instead of climbing to a high-water mark |
+| audible seams | shedding time-compresses 2.5 % while it runs. Listen for flutter right after a hiccup; if it is audible, `_SHED_PER_BLOCK` is the knob |
+
 **4. Re-rank the models blind** through `scripts/ab_listen.sh`, not through
 the app. Every ranking so far has been sighted, and the 2026-08-20 session
 placed `dpdfnet` third despite it being the only net-harmful model — which is
@@ -404,16 +412,61 @@ feedback loop turned the app off and disabled the only thing that can catch
 the second.** `_tick` is now a wrapper that reschedules in a `finally`
 around `_tick_body`, so no exit — or exception — can skip it.
 
-### One finding deliberately not acted on
+### The residual latency was a ratchet — fixed 2026-08-21
 
-`sd.Stream` is constructed with **no `latency=` argument**, so sounddevice's
-default of `'high'` applies. Measured on the reporter's hardware: **34.8 ms
+Reported after the switch-path fixes landed: the continuous drift was gone,
+but the standing lag was still higher than early builds. The panel said why.
+`added latency 107 ms` against `processor lag 29.3 ms` on `dtln` — **~78 ms
+of it was not the model** — with `output backlog 37 ms` (nowhere near the
+160 ms cap, so no drift), `xruns 0`, `worker 2.2 ms/block`, `fallbacks 36`
+over `blocks 70441` (~23 minutes).
+
+**`_dry_out` could only ever get deeper.** It is fed `frames` every callback
+and drained by `take_dry = min(take, len(_dry_out))` where
+`take = min(frames, len(_out))`, so the drain can never exceed the feed.
+Only `stop()`, a model swap and the 160 ms cap ever shortened it. Every
+block the worker failed to fill — 36 of them here — was delay kept for the
+rest of the session, and a session therefore converged on its own
+high-water mark. Driving the real `_callback_body` shows it plainly: three
+starved blocks cost 60 ms, and a thousand healthy blocks afterwards, with
+the worker at double speed and 140 ms of wet backlog piled up, gave back
+**none** of it.
+
+That also explains "bigger than in the first version" without a regression:
+same build, longer session, higher water mark. It predicts that toggling
+off and on drops the figure immediately, since `stop()` clears the FIFO.
+
+`_shed_slack()` gives it back. The head of `_dry_out` and the head of `_out`
+refer to the same instant — that is what the `_mix_pad` alignment buys — so
+dropping the same count from both preserves alignment and moves the whole
+pipeline closer to live. 0.5 ms per block, spliced with a crossfade of its
+own length so the seam is a blend rather than a click, which recovers 100 ms
+in about four seconds. It only runs while wet is at least a block ahead,
+which makes it self-limiting: starvation is what creates slack, so shedding
+too far cannot be a stable state. `stats.slack_shed` counts it.
+
+**This is not the same lever as the device buffering below.** They are
+independent and they add: the ratchet is the pipeline's own delay, the one
+below is PortAudio's, and `latency_ms` reports only the first.
+
+### One finding deferred, then acted on 2026-08-21
+
+`sd.Stream` was constructed with **no `latency=` argument**, so sounddevice's
+default of `'high'` applied. Measured on the reporter's hardware: **34.8 ms
 in + 34.8 ms out**, against 8.7 + 8.7 at `'low'` — roughly 70 ms of device
-buffering that C7's number excludes *by design*, so nothing has ever
-reported it. Switching to `'low'` was considered and rejected for now: lower
-buffering means less tolerance for scheduling jitter, and with the
-stream-death question still open it could make things worse. Revisit once
-the suppression defect and the drift question are settled.
+buffering that C7's number excludes *by design*, so nothing had ever
+reported it. Switching to `'low'` was considered and rejected on 2026-08-20:
+lower buffering means less tolerance for scheduling jitter, and with the
+stream-death question still open it could make things worse.
+
+**What settled it** was a screenshot of a 23-minute session on the shipped
+default: **`xruns 0`, `worker 2.2 ms/block` against a 20 ms budget**. There
+was no jitter to tolerate — the argument for deferring had no evidence
+behind it and now has evidence against it. `STREAM_LATENCY = "low"` in
+`audio/engine.py`, one word to change back, and `details ▸` now shows
+**device buffer** as *negotiated* (`device_latency_ms` reads it off the open
+stream) rather than as requested, because asking for a latency is a hint and
+PortAudio gives what the device allows.
 
 ## The by-ear results so far (2026-08-19)
 
@@ -665,6 +718,27 @@ more defects" above; in short:
 
 Not reproduced by ear yet: all three were found by reading the switch path.
 The by-ear confirmation is folded into next-step 3.
+
+Then, from the panel readout that followed those fixes — drift gone, standing
+lag still high — two more, both about latency and independent of each other:
+
+- **`_shed_slack()`** — `_dry_out` was a ratchet that only ever deepened, so
+  a session kept every starved block as permanent delay (107 ms reported
+  against a 29.3 ms model). It now gives slack back at 0.5 ms per block,
+  crossfaded, while wet is a block ahead. See "The residual latency was a
+  ratchet" above.
+- **`STREAM_LATENCY = "low"`** — reverses the 2026-08-20 decision to leave
+  PortAudio at `'high'`, on the evidence that closed it: `xruns 0` and a
+  worker at 11 % of budget over 23 minutes. Worth ~52 ms. `details ▸` now
+  reports **device buffer** as negotiated, closing the gap where ~70 ms of
+  audible delay appeared in no readout at all.
+- **`tests/test_latency_recovery.py`** covers both (28 checks), and the
+  details column widened to 16 because `output backlog` is exactly 14
+  characters and had been rendering as `output backlog37 ms`.
+
+**Neither latency change is confirmed by ear or on hardware.** `'low'` in
+particular is a real-device question: if it costs xruns, it is one word in
+`audio/engine.py` to put back.
 
 ## What landed 2026-08-20 (third session)
 
