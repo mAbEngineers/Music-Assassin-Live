@@ -116,6 +116,16 @@ def test_the_details_block_is_scannable():
           lines[0].index("dpdfnet_hr") == lines[1].index("0"),
           repr(lines))
 
+    # The column is only a column while every key clears it. "output
+    # backlog" is 14 characters and shipped against a 14-wide field, so it
+    # rendered as "output backlog37 ms".
+    longest = ("model", "worker", "processor lag", "added latency",
+               "output backlog", "device buffer", "stereo", "mix", "input",
+               "output", "blocks", "fallbacks", "xruns")
+    rendered = App.format_details(tuple((k, "X") for k in longest))
+    collided = [ln for ln in rendered.split("\n") if not ln.endswith("  X")]
+    check("no key touches its value", not collided, repr(collided))
+
 
 def test_the_boost_readout_matches_the_fader():
     """Past 100 % the fader raises wet gain as well as the mix, and until now

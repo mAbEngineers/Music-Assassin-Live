@@ -289,6 +289,33 @@ class AudioEngine:
         return 1000.0 * len(self._out) / SAMPLE_RATE
 
     @property
+    def device_latency_ms(self) -> tuple[float, float] | None:
+        """PortAudio's own (input, output) buffering in ms, as negotiated.
+        None before the stream exists.
+
+        `latency_ms` excludes device buffering deliberately: it measures the
+        pipeline this project controls. That is the right thing for it to
+        measure and the wrong thing to be the only number — at sounddevice's
+        default of 'high' the excluded part measured 34.8 + 34.8 ms on the
+        reporter's hardware, which is most of what a listener hears, and no
+        readout named it.
+
+        Reporting it is all this does. Asking for less (latency='low', 8.7 +
+        8.7) was tried on 2026-08-21 and reverted with the shed that shipped
+        alongside it: device buffering absorbs the same worker jitter the
+        wet FIFO does, so cutting it makes underruns likelier, and underruns
+        are audible as processed/unprocessed alternation. If it is revisited
+        it should be on its own, with fallback_blocks watched.
+        """
+        if self._stream is None:
+            return None
+        try:
+            lat = self._stream.latency
+        except Exception:  # noqa: BLE001 — same reasoning as stream_ok: a
+            return None    # probe that can fail is not a probe
+        return 1000.0 * lat[0], 1000.0 * lat[1]
+
+    @property
     def processor_lag_ms(self) -> float | None:
         """How far the processor's output trails its input, in ms, or None
         while it is still being measured or if it never could be."""

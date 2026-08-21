@@ -173,13 +173,11 @@ While there, read **output backlog** in `details ▸` — if it ever shows
 switch: defect 3 below made a live switch bake in ~140 ms permanently, and
 separating that from real drift is the whole point of the reading.
 
-The two latency changes need the same pass, and neither has run on hardware:
-
-| readout | what to check |
-|---|---|
-| `device buffer` | should now read ~8.7 + 8.7 ms, not 34.8 + 34.8. If `xruns` leaves 0, `'low'` holds; if it does not, `STREAM_LATENCY` goes back to `'high'` |
-| `added latency` | should start near the model's own lag and **stay** there over 20+ minutes, instead of climbing to a high-water mark |
-| audible seams | shedding time-compresses 2.5 % while it runs. Listen for flutter right after a hiccup; if it is audible, `_SHED_PER_BLOCK` is the knob |
+**Watch `fallbacks` while you do it.** It is the counter the 2026-08-21
+regression should have been caught on and was not: dry/wet alternation is
+audible as a pulsing beat on every model, and neither `xruns` nor
+`stream_ok` moves when it happens. `added latency` climbing with session
+length is the open ratchet, not a new fault.
 
 **4. Re-rank the models blind** through `scripts/ab_listen.sh`, not through
 the app. Every ranking so far has been sighted, and the 2026-08-20 session
@@ -412,7 +410,7 @@ feedback loop turned the app off and disabled the only thing that can catch
 the second.** `_tick` is now a wrapper that reschedules in a `finally`
 around `_tick_body`, so no exit — or exception — can skip it.
 
-### The residual latency was a ratchet — fixed 2026-08-21
+### The residual latency was a ratchet — diagnosed 2026-08-21, NOT fixed
 
 Reported after the switch-path fixes landed: the continuous drift was gone,
 but the standing lag was still higher than early builds. The panel said why.
@@ -436,18 +434,50 @@ That also explains "bigger than in the first version" without a regression:
 same build, longer session, higher water mark. It predicts that toggling
 off and on drops the figure immediately, since `stop()` clears the FIFO.
 
-`_shed_slack()` gives it back. The head of `_dry_out` and the head of `_out`
-refer to the same instant — that is what the `_mix_pad` alignment buys — so
-dropping the same count from both preserves alignment and moves the whole
-pipeline closer to live. 0.5 ms per block, spliced with a crossfade of its
-own length so the seam is a blend rather than a click, which recovers 100 ms
-in about four seconds. It only runs while wet is at least a block ahead,
-which makes it self-limiting: starvation is what creates slack, so shedding
-too far cannot be a stable state. `stats.slack_shed` counts it.
+#### The attempted fix made it much worse — reverted the same day
 
-**This is not the same lever as the device buffering below.** They are
-independent and they add: the ratchet is the pipeline's own delay, the one
-below is PortAudio's, and `latency_ms` reports only the first.
+`_shed_slack()` dropped the same count from the head of `_dry_out` and
+`_out` each block (0.5 ms, crossfaded), on the reasoning that their heads
+refer to the same instant so equal drops preserve alignment. Shipped in
+38db379, reverted in ef22d80 within the hour: **"much worse now, with some
+pulsating beat in all models and latency etc."**
+
+A periodic artifact on every model is the mix alternating between wet and
+dry — `fallback_blocks`, at the ~50 Hz block rate — and the shed drove it
+there. It took from `_out` as well as `_dry_out`, and its floor for `_out`
+was **one block**. One block of wet backlog is not a margin; it is exactly
+the depth at which any jitter in worker scheduling leaves `take < frames`
+and the callback emits dry for that block.
+
+**The reasoning error is the part worth keeping.** The commit claimed the
+mechanism was self-limiting: shed too far, wet starves, shedding stops.
+It does not, because shedding takes from *both* sides equally and so never
+creates the starvation that would stop it. It parks the pipeline on the
+edge of underrunning and holds it there.
+
+**The tests could not see it, and that is also worth keeping.** The rig
+used a zero-lag passthrough, whose dry FIFO drains to nothing unaided, so
+shedding halted for a reason unrelated to any real pipeline. Re-run with a
+processor carrying a realistic 29 ms lag and ±1.2 ms of worker jitter:
+
+| configuration | fallbacks / 3000 blocks | wet left |
+|---|---|---|
+| no shed, no jitter | 0 | 1920 |
+| no shed, with jitter | 21 | 65 |
+| **shipped shed, with jitter** | **76** | **0** |
+| shed with a 4-block wet floor | 21 | 65 |
+
+3.6x the dry/wet alternation, and wet drained to nothing. **Any future
+attempt needs a wet floor of several blocks** — but note the last row: at a
+floor that is actually safe, it sheds nothing, because the slack and the
+jitter margin are the same buffer. That may mean the ratchet cannot be
+worked off from the callback at all, and belongs in `stop()`/restart or in
+a resampler that changes rate by fractions of a percent instead of cutting
+samples.
+
+**The ratchet itself is unchanged and still real** — the same run shows a
+dry FIFO climbing 1400 -> 1911 (29 -> 39 ms) on jitter alone, with no shed
+anywhere. Only this answer to it was wrong.
 
 ### One finding deferred, then acted on 2026-08-21
 
@@ -459,14 +489,24 @@ reported it. Switching to `'low'` was considered and rejected on 2026-08-20:
 lower buffering means less tolerance for scheduling jitter, and with the
 stream-death question still open it could make things worse.
 
-**What settled it** was a screenshot of a 23-minute session on the shipped
-default: **`xruns 0`, `worker 2.2 ms/block` against a 20 ms budget**. There
-was no jitter to tolerate — the argument for deferring had no evidence
-behind it and now has evidence against it. `STREAM_LATENCY = "low"` in
-`audio/engine.py`, one word to change back, and `details ▸` now shows
-**device buffer** as *negotiated* (`device_latency_ms` reads it off the open
-stream) rather than as requested, because asking for a latency is a hint and
-PortAudio gives what the device allows.
+**It was switched to `'low'` on 2026-08-21** on a screenshot of a 23-minute
+session — `xruns 0`, `worker 2.2 ms/block` against a 20 ms budget — and
+**reverted the same day** (ef22d80), alongside the shed it shipped with.
+
+`xruns 0` was the wrong evidence. It counts what PortAudio notices, and the
+failure that matters here is one it never sees: the *worker* arriving late,
+which costs a wet block and a dry fallback with the stream perfectly
+healthy throughout. Device buffering absorbs exactly that jitter, so cutting
+it from ~70 ms to ~17 ms makes underruns likelier — the same direction as
+the shed, at the same time, which is also why neither could be judged on
+its own.
+
+**If it is revisited, revisit it alone**, and judge it on `fallbacks` rather
+than `xruns`. `details ▸` still shows **device buffer** (34.8 + 34.8 at the
+restored default), read back off the open stream via `device_latency_ms`
+rather than assumed from the request, since asking for a latency is only a
+hint. That readout is all that survives, and it is the thing that was
+missing: ~70 ms of audible delay that appeared in no number at all.
 
 ## The by-ear results so far (2026-08-19)
 
@@ -719,26 +759,27 @@ more defects" above; in short:
 Not reproduced by ear yet: all three were found by reading the switch path.
 The by-ear confirmation is folded into next-step 3.
 
-Then, from the panel readout that followed those fixes — drift gone, standing
-lag still high — two more, both about latency and independent of each other:
+Then a second attempt, at the standing latency, which **failed and was
+reverted** (38db379, reverted by ef22d80). `_shed_slack()` plus
+`STREAM_LATENCY = "low"` produced "much worse now, with some pulsating beat
+in all models" and went back within the hour. Both had the same effect from
+opposite ends — less margin against worker jitter — and the audible result
+is dry/wet alternation at the block rate. Full post-mortem, including the
+reasoning error and why the tests missed it, under "The residual latency was
+a ratchet" above.
 
-- **`_shed_slack()`** — `_dry_out` was a ratchet that only ever deepened, so
-  a session kept every starved block as permanent delay (107 ms reported
-  against a 29.3 ms model). It now gives slack back at 0.5 ms per block,
-  crossfaded, while wet is a block ahead. See "The residual latency was a
-  ratchet" above.
-- **`STREAM_LATENCY = "low"`** — reverses the 2026-08-20 decision to leave
-  PortAudio at `'high'`, on the evidence that closed it: `xruns 0` and a
-  worker at 11 % of budget over 23 minutes. Worth ~52 ms. `details ▸` now
-  reports **device buffer** as negotiated, closing the gap where ~70 ms of
-  audible delay appeared in no readout at all.
-- **`tests/test_latency_recovery.py`** covers both (28 checks), and the
-  details column widened to 16 because `output backlog` is exactly 14
-  characters and had been rendering as `output backlog37 ms`.
+What survived that round, both display-only and neither in the audio path:
 
-**Neither latency change is confirmed by ear or on hardware.** `'low'` in
-particular is a real-device question: if it costs xruns, it is one word in
-`audio/engine.py` to put back.
+- **`device buffer` in `details ▸`** — PortAudio's own in/out buffering,
+  read off the open stream. ~70 ms at the restored `'high'` default, and it
+  had never appeared in any readout, because `latency_ms` excludes it by
+  design.
+- **The details label column, 14 -> 16.** `output backlog` is exactly 14
+  characters and was rendering as `output backlog37 ms`. Guarded in
+  `test_status_line.py` against every key the block uses.
+
+**The ratchet is still open and still unfixed.** It is the reason the
+standing lag grows with session length.
 
 ## What landed 2026-08-20 (third session)
 
