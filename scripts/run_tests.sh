@@ -29,7 +29,6 @@ HARDWARE_FREE=(
   test_capture_diagnosis    # C8, incl. the pulse-proxied pid trap
   test_retarget_live        # C1's live move and its fallbacks
   test_live_model_swap      # live model switch + the supervision heartbeat
-  test_latency_recovery     # the dry-FIFO ratchet, and device buffering
   test_routing_events       # check()'s four outcomes (C1/C3)
   test_status_line          # C4's health word
   test_volume_mirror        # C2's mirror

@@ -54,42 +54,10 @@ SAMPLE_RATE = 48000
 BLOCK = 960          # 20 ms
 XFADE_BLOCKS = 1     # gain ramp spread over one block == 20 ms
 
-# PortAudio's own buffering, requested when the stream is opened.
-#
-# sounddevice defaults to 'high', which measured 34.8 ms in + 34.8 ms out on
-# the reporter's hardware against 8.7 + 8.7 at 'low' — roughly 70 ms of
-# delay that latency_ms excludes by design (it measures the pipeline, not
-# the device), so nothing had ever reported it. It was considered and
-# deferred once, on the grounds that less buffering means less tolerance
-# for scheduling jitter.
-#
-# What settled it was a 23-minute session on the shipped default: xruns 0,
-# worker 2.2 ms against a 20 ms budget. There was no jitter to tolerate.
-# The negotiated figure is reported (device_latency_ms) rather than assumed,
-# because the request is a hint — PortAudio gives what the device allows —
-# and if it ever costs xruns, this is one word to change back.
-STREAM_LATENCY = "low"
-
 LIMITER_THRESHOLD = 0.8  # below this, output passes through untouched
 LIMITER_CEILING = 0.98   # peaks above threshold compress toward this, never past it
 
 _EMPTY_STEREO = np.zeros((0, 2), dtype=np.float32)
-
-
-def _splice_head(buf: np.ndarray, n: int) -> np.ndarray:
-    """Drop n samples from the head, crossfaded over the n that follow.
-
-    A hard cut here is a step discontinuity — a click — and it would happen
-    on every block while slack is being worked off, not once. Fading the
-    discarded samples out against the surviving ones as they fade in costs
-    the same n samples and makes the seam a short blend instead.
-
-    Caller guarantees len(buf) >= 2 * n.
-    """
-    out = buf[n:].copy()
-    w = np.linspace(0.0, 1.0, n, dtype=np.float32)[:, None]
-    out[:n] = buf[:n] * (1.0 - w) + out[:n] * w
-    return out
 
 
 def _soft_limit(x: np.ndarray) -> np.ndarray:
@@ -115,7 +83,6 @@ class EngineStats:
         self.xruns = 0
         self.callback_errors = 0   # exception in _callback -> would silently kill the stream
         self.backlog_trimmed = 0   # samples dropped once to correct a startup stall
-        self.slack_shed = 0        # samples given back by _shed_slack()
 
 
 class AudioEngine:
@@ -322,26 +289,6 @@ class AudioEngine:
         return 1000.0 * len(self._out) / SAMPLE_RATE
 
     @property
-    def device_latency_ms(self) -> tuple[float, float] | None:
-        """PortAudio's own (input, output) buffering in ms, as negotiated —
-        not as requested. None before the stream exists.
-
-        `latency_ms` excludes this deliberately: it measures the pipeline
-        this project controls. That is the right thing for it to measure
-        and the wrong thing to be the only number, because the excluded
-        part was ~70 ms of what a listener actually hears and no readout
-        named it. Requesting a latency is a hint, so the answer is read
-        back from the open stream rather than assumed from STREAM_LATENCY.
-        """
-        if self._stream is None:
-            return None
-        try:
-            lat = self._stream.latency
-        except Exception:  # noqa: BLE001 — same reasoning as stream_ok: a
-            return None    # probe that can fail is not a probe
-        return 1000.0 * lat[0], 1000.0 * lat[1]
-
-    @property
     def processor_lag_ms(self) -> float | None:
         """How far the processor's output trails its input, in ms, or None
         while it is still being measured or if it never could be."""
@@ -481,7 +428,7 @@ class AudioEngine:
         self._stream = sd.Stream(
             device=(capture_dev, playback_dev), samplerate=SAMPLE_RATE,
             blocksize=BLOCK, channels=2, dtype="float32",
-            latency=STREAM_LATENCY, callback=self._callback)
+            callback=self._callback)
         self._stream.start()
 
         # second targeting pass, once the stream (and its stream nodes)
@@ -612,7 +559,6 @@ class AudioEngine:
             # dry FIFO never gets ahead of what wet will actually produce
 
         with self._lock:
-            self._shed_slack()
             take = min(frames, len(self._out))
             wet_st = self._out[:take]
             self._out = self._out[take:]
@@ -737,49 +683,6 @@ class AudioEngine:
                 self._out = np.concatenate([self._out, y.astype(np.float32)])
                 if len(self._out) > self._max_out:
                     self._out = self._out[-self._max_out:]
-
-    # How much accumulated delay is given back per callback. 0.5 ms per
-    # 20 ms block is a 2.5 % time compression while it runs, which recovers
-    # 100 ms in about four seconds and is mild enough to pass under the
-    # crossfade. Raising it recovers faster and flutters harder; this is
-    # the knob if that trade wants revisiting.
-    _SHED_PER_BLOCK = int(SAMPLE_RATE * 0.0005)
-
-    def _shed_slack(self) -> None:
-        """Give back pipeline delay that nothing else can remove.
-
-        _dry_out is fed `frames` every callback and drained by at most that
-        (take_dry <= take <= frames), so its depth is monotonically
-        non-decreasing: every block the worker fails to fill is delay the
-        listener keeps for the rest of the session. Only stop(), a model
-        swap and the 160 ms cap ever shortened it, so a session converged
-        on its own high-water mark. Measured on a healthy 23-minute run —
-        xruns 0, worker at 11 % of budget — 36 starved blocks out of 70441
-        had ratcheted 107 ms onto a model whose own lag is 29 ms, and a
-        thousand consecutive good blocks gave back none of it.
-
-        The head of _dry_out and the head of _out refer to the same instant
-        — that is what the _mix_pad alignment buys — so dropping the same
-        count from both preserves the alignment and moves the whole
-        pipeline that much closer to live.
-
-        Self-limiting by construction: it only runs while wet is at least a
-        block ahead, and starvation is precisely what puts slack there, so
-        shedding too far cannot become a stable state. Nothing happens in
-        the common case, where there is no slack to give back.
-
-        Caller holds _lock, for _out. _dry_out is callback-thread-only.
-        """
-        # _mix_pad is alignment, not slack: it is delay deliberately added
-        # to the dry side and subtracted back out of latency_ms.
-        excess = len(self._dry_out) - self._mix_pad - BLOCK
-        spare = len(self._out) - BLOCK
-        n = min(self._SHED_PER_BLOCK, excess, spare)
-        if n <= 0 or len(self._dry_out) < 2 * n or len(self._out) < 2 * n:
-            return
-        self._dry_out = _splice_head(self._dry_out, n)
-        self._out = _splice_head(self._out, n)
-        self.stats.slack_shed += n
 
     def _wet_mono_proc(self, proc, down, up, block) -> np.ndarray:
         """The shipped path: stereo in, mono model, stereo back out.
