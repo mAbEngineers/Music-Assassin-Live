@@ -573,8 +573,12 @@ class App:
         The counters used to be four dense lines of `key: value  key: value`
         that had to be read rather than scanned. Reading them happens when
         something is wrong, which is the worst moment to make someone parse
-        a line."""
-        return "\n".join(f"{k:<14}{v}" for k, v in rows)
+        a line.
+
+        Width 16, not 14: "output backlog" is exactly 14 characters, so at
+        the old width it butted straight against its value ("backlog37 ms").
+        A column that only holds while no key reaches it is not a column."""
+        return "\n".join(f"{k:<16}{v}" for k, v in rows)
 
     # -- mix / mute callbacks -----------------------------------------------------
     @staticmethod
@@ -932,6 +936,21 @@ class App:
         ms = self.engine.output_backlog_ms
         return f"{ms:.0f} ms" + (" — SATURATED" if ms >= 155.0 else "")
 
+    def _device_buffer_text(self) -> str:
+        """PortAudio's own in/out buffering, as negotiated.
+
+        Deliberately excluded from `added latency`, which measures the
+        pipeline this project controls — and therefore invisible until it
+        was reported here, despite being ~70 ms of what a listener hears at
+        sounddevice's default of 'high' (see engine.STREAM_LATENCY).
+        """
+        if self.engine is None:
+            return "—"
+        lat = self.engine.device_latency_ms
+        if lat is None:
+            return "—"
+        return f"{lat[0]:.1f} + {lat[1]:.1f} ms"
+
     @staticmethod
     def _level_db(levels: list) -> str:
         """Most recent RMS as dBFS. Silence reads as a floor, not as
@@ -1196,6 +1215,7 @@ class App:
                         ("processor lag", self._lag_text()),
                         ("added latency", f"{self.engine.latency_ms:.0f} ms"),
                         ("output backlog", self._backlog_text()),
+                        ("device buffer", self._device_buffer_text()),
                         ("stereo", "on" if self.stereo_enabled else "off"),
                         ("mix", f"{round(self.mix_pct)} %"),
                         ("input", self._level_db(self.engine.recent_input_levels())),
