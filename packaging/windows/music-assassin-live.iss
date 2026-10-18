@@ -5,12 +5,12 @@
 ;   BundleVBCable=1.
 ;
 ; NOTE ON SCOPE: this installer gets the binary, models, and the VB-CABLE
-; virtual-audio driver onto the machine — it does not by itself make the app
-; work on Windows. The routing seam now exists (backends/base.py defines the
-; RoutingBackend protocol), but the Windows implementation of it does not:
-; trap = CABLE Input, capture = CABLE Output, default-device switching via
-; pycaw. See ROADMAP D3.3. This script is packaging scaffolding ahead of
-; that, not a claim that Windows support is complete.
+; virtual-audio driver onto the machine. The Windows routing backend it feeds
+; now exists — backends/windows.py: trap = CABLE Input, capture = CABLE
+; Output, default-endpoint switching via IPolicyConfig (ROADMAP D3.3). Its
+; state machine is tested and the COM call is verified on real hardware, but
+; nobody has yet run the whole path on a Windows machine with a cable
+; installed, so a successful install is not yet evidence that audio flows.
 ;
 ; WASAPI loopback is NOT the mechanism, despite what earlier notes said. It
 ; taps the signal where this app has to insert into it — the original audio

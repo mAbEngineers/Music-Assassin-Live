@@ -22,6 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from assassin_live.audio import routing                      # noqa: E402
 from assassin_live.audio.backends import pipewire            # noqa: E402
+from assassin_live.audio.backends import windows             # noqa: E402
 
 
 def test_premise():
@@ -33,24 +34,37 @@ def test_premise():
 
 
 def test_no_backend_for_unknown_platform():
-    assert routing._backend_for("win32") is None, "a Windows backend appeared"
-    assert routing._backend_for("darwin") is None
+    assert routing._backend_for("darwin") is None, "a macOS backend appeared"
+    assert routing._backend_for("sunos5") is None
     assert routing._backend_for("linux") is pipewire.PipeWireBackend
-    print("  platform table -> linux maps to PipeWire, nothing else maps")
+    assert routing._backend_for("win32") is windows.WindowsBackend
+    print("  platform table -> linux/win32 map, nothing else does")
 
 
 def test_reason_names_the_platform_when_no_backend():
+    """macOS rather than win32: Windows has a backend now, so asking about
+    it no longer exercises the no-backend path."""
     real = sys.platform
     try:
-        routing.sys.platform = "win32"
+        routing.sys.platform = "darwin"
         reason = routing.unsupported_reason()
         assert reason, "no reason given on a platform with no backend"
-        assert "win32" in reason, f"reason does not name the platform: {reason!r}"
+        assert "darwin" in reason, f"reason does not name the platform: {reason!r}"
         # It has to be actionable, not just a refusal.
         assert "PipeWire" in reason
         print("  no backend     -> refused, and says why")
     finally:
         routing.sys.platform = real
+
+
+def test_windows_backend_refuses_on_linux():
+    """The guard has to hold in both directions: the Windows backend is
+    importable here (routing.py imports it unconditionally) and must refuse
+    rather than reach for COM."""
+    reason = windows.WindowsBackend.unsupported_reason()
+    assert reason, "the Windows backend did not refuse on Linux"
+    assert sys.platform in reason, f"reason does not name the platform: {reason!r}"
+    print("  windows on linux-> refused, and names the platform")
 
 
 def test_reason_names_every_missing_tool():
@@ -105,6 +119,7 @@ def main():
     test_premise()
     test_no_backend_for_unknown_platform()
     test_reason_names_the_platform_when_no_backend()
+    test_windows_backend_refuses_on_linux()
     test_reason_names_every_missing_tool()
     test_pw_dump_survives_a_missing_binary()
     test_recover_stale_does_not_raise()

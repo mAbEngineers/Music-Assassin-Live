@@ -1,18 +1,33 @@
-# Windows packaging (scaffolding, not yet a working build)
+# Windows packaging
 
 Builds `dist/music-assassin-live-setup-<version>.exe`: a PyInstaller onefile
 binary (same engine as the Linux `.deb`, see `scripts/build_deb.sh`) wrapped
 in an Inno Setup installer.
 
-## Status: packaging is ready, the app itself is not
+## Status: written, compiled, not yet run on real hardware
 
-`assassin_live/audio/routing.py` and `engine.py` only know how to talk to
-PipeWire/WirePlumber. There is no Windows routing backend yet (WASAPI
-loopback capture + setting a virtual device as the Windows default — the
-Windows equivalent of the PipeWire trap-sink). Running the installed `.exe`
-today will not work end-to-end. This directory exists so the packaging side
-is ready the moment that routing code lands — it does not itself add Windows
-support.
+The Windows routing backend exists: `assassin_live/audio/backends/windows.py`
+makes a virtual audio cable the system default via `IPolicyConfig`, captures
+the cable's output side, and renders to the real device — the same shape as
+the PipeWire trap-sink on Linux. `routing.py` selects it on `win32`.
+
+What is verified, and how:
+
+| Claim | Verified by |
+| --- | --- |
+| The state machine handles device loss, hotplug, flapping, crash recovery | `tests/test_windows_routing.py` — 29 cases, hardware-free (all COM sits behind `CoreAudio`, which the tests replace) |
+| `IPolicyConfig` instantiates and switches the default endpoint | `scripts/spike_d3_windows_routing.py`, run on Windows 10 19044 — `SetDefaultEndpoint` returned S_OK for all three roles |
+| `pycaw`/`comtypes` import and enumerate on real Windows | `.github/workflows/windows-build.yml` |
+| The exe builds and the `.iss` compiles | same workflow |
+
+What is **not** verified: that audio actually flows end to end. That needs a
+Windows machine with a cable installed, and no CI runner has either — GitHub
+runners report zero audio endpoints. Until someone runs it, Windows support
+is written and plausible, not proven.
+
+Also still open: the installer prompts for VB-CABLE with a single message box
+rather than downloading it (see the VB-CABLE note below), builds are unsigned,
+and CI builds carry no model weights.
 
 ## Before shipping a build with VB-CABLE bundled
 

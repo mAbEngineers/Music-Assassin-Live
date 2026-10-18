@@ -69,20 +69,27 @@ All of the above are **untracked in git** — `git status` still shows them as
 
 ## What's NOT done — the actual blocking gap
 
-**The Windows audio-routing backend in `assassin_live` does not exist.**
-`assassin_live/audio/routing.py` and `engine.py` only know how to talk to
-PipeWire/WirePlumber (`pw-cli` / `wpctl` / `pw-dump`). There is no Windows
-equivalent written — no WASAPI loopback capture path, no code to set
-VB-CABLE as the default output device (the natural tool for that is `pycaw`,
-MIT-licensed, Windows Core Audio API bindings — not yet a dependency).
-**This means: even with a perfectly built installer, the installed app would
-not function on Windows today.** The packaging work in this session is
-scaffolding built ahead of that — it doesn't complete Windows support by
-itself, and I should not be understood as having claimed it does.
+**Superseded 2026-10-18.** The backend described below as missing has since
+been written: `assassin_live/audio/backends/windows.py`. Two of the
+assumptions in the original text turned out to be wrong and are worth keeping
+on the record:
+
+- **WASAPI loopback is not the mechanism.** It taps the signal where this app
+  has to insert into it, so the original audio keeps playing underneath the
+  processed copy. `sounddevice` exposes no loopback flag anyway (checked on
+  0.5.5 and 0.5.6). A virtual cable is architecturally required for v1; the
+  only insert-capable alternative is an APO, which is a C++ driver component.
+- **`pycaw` alone cannot set the default device.** Nothing public can.
+  `IPolicyConfig`, an undocumented COM interface, is the only way, and it was
+  spiked on real hardware before the backend was written
+  (`scripts/spike_d3_windows_routing.py`; Windows 10 19044, S_OK for all
+  three roles). `pycaw` does the enumeration around it.
+
+The remaining gap is narrower and purely empirical: **nobody has run the
+whole path on a Windows machine with a cable installed.** CI cannot — GitHub
+runners report zero audio endpoints.
 
 Also not done:
-- No `.exe` has been built. No Windows machine, VM, or Wine is available in
-  this environment to build or test one.
 - The VB-Audio permission email has not been sent.
 - The `.iss` script has never been run through `ISCC.exe` — it's a
   careful-but-unverified first draft. Two spots most likely to need fixing
@@ -100,12 +107,10 @@ Also not done:
 1. **Decide on the VB-Audio email** — send `vb-audio-permission-email.md` as
    drafted (edit signature/contact first), or make the call to ship
    unbundled indefinitely and stop treating it as an open question.
-2. **Write the Windows routing backend** — this is the real unblock, not the
-   installer. New capture path (WASAPI loopback, `sounddevice` already
-   supports it) + default-device switching (`pycaw`) + whatever crash/state
-   recovery equivalent to `routing.py`'s PipeWire logic is needed. This is
-   real engineering (days, not hours) — worth scoping as its own task before
-   starting.
+2. ~~**Write the Windows routing backend**~~ — done 2026-10-18,
+   `backends/windows.py`. Not by WASAPI loopback, and not by `pycaw` alone;
+   see the corrected notes above. What replaces this step: install a cable on
+   a real Windows box, run the exe, and find out whether audio flows.
 3. **Get a Windows build environment** — either a real Windows
    machine/VM to run `scripts\build_windows.bat` by hand, or a GitHub
    Actions `windows-latest` CI job (offered last session, user deferred —

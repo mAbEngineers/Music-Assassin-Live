@@ -1,0 +1,86 @@
+name: spike windows routing
+
+# Answers one question before D3.3 gets scoped: can Python drive
+# IPolicyConfig, the undocumented COM interface that is the only way to set
+# the Windows default audio endpoint? Everything else in a Windows routing
+# backend is ordinary work; this is the piece with no public API and no
+# compatibility guarantee, so it is worth an hour before it is worth a week.
+#
+# A runner has no audio endpoints, so it cannot exercise the actual switch --
+# but it can answer whether the interface exists and instantiates, which is
+# the half that would invalidate the design.
+#
+# Throwaway. Delete this workflow and the branch once the question is closed.
+
+on:
+  push:
+    branches: [spike/windows-routing]
+  workflow_dispatch:
+
+jobs:
+  spike:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install probes
+        shell: cmd
+        run: |
+          python -m pip install --upgrade pip
+          pip install sounddevice pycaw comtypes
+
+      # Never fails the job: this reports findings, it does not assert them.
+      - name: Probe (on the runner, which has no audio endpoints)
+        shell: cmd
+        run: |
+          python scripts\spike_d3_windows_routing.py
+          exit /b 0
+
+      # The runner cannot answer the question that matters -- it has no audio
+      # devices -- so the probe has to go to a machine that does. Shipping it
+      # as a standalone .exe means the person running it needs no Python, no
+      # pip, and no checkout: download, double-click, send back the report.
+      - name: Package the probe as a standalone exe
+        shell: cmd
+        run: |
+          pip install pyinstaller
+          pyinstaller --onefile --console ^
+            --name spike-windows-routing ^
+            --collect-all pycaw ^
+            --collect-all comtypes ^
+            --collect-all sounddevice ^
+            --collect-all _sounddevice_data ^
+            scripts\spike_d3_windows_routing.py
+          if errorlevel 1 exit /b 1
+          dir dist
+
+      # Building the exe is not the same as it working. This probe is carried
+      # to a machine with no internet, no Python and no checkout, where a
+      # missing bundled DLL means a dead end rather than a retry -- so prove
+      # the frozen binary launches and resolves its own dependencies here,
+      # where fixing it is cheap. The interactive pause is gated on an
+      # isatty() check, so it cannot block a runner.
+      - name: Run the built exe (prove the bundle resolves)
+        shell: cmd
+        run: |
+          dist\spike-windows-routing.exe
+          if errorlevel 1 (
+            echo ERROR: the packaged exe failed to run >&2
+            exit /b 1
+          )
+          echo OK: packaged exe ran
+          type spike-windows-routing-report.txt 2>nul
+          if exist dist\spike-windows-routing-report.txt type dist\spike-windows-routing-report.txt
+          exit /b 0
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spike-windows-routing-exe
+          path: |
+            dist/spike-windows-routing.exe
+            dist/spike-windows-routing-report.txt
+          if-no-files-found: error
+          retention-days: 90

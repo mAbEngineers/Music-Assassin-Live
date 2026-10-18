@@ -1,21 +1,26 @@
 name: windows build
 
-# Proves the Windows packaging COMPILES. It does not prove the app works on
-# Windows -- there is no Windows audio backend yet, so the exe this produces
-# refuses to start and says so (assassin_live/audio/routing.py's
-# unsupported_reason()). That refusal is asserted below, on a real Windows
-# runner, because "it fails cleanly" is a claim worth testing rather than
-# assuming.
+# Proves the Windows packaging COMPILES and that the Windows routing backend
+# behaves. It cannot prove the app actually routes audio: a GitHub runner has
+# no audio endpoints at all and certainly no virtual audio cable, so there is
+# nothing here to route. That last step needs a real Windows box -- see
+# docs/ROADMAP.md D3.6.
+#
+# So what IS proven here:
+#   1. backends/windows.py's state machine, via tests/test_windows_routing.py.
+#      Hardware-free by construction (all COM sits behind CoreAudio, which the
+#      tests replace), so it runs anywhere -- but running it ON Windows also
+#      checks that pycaw and comtypes import on the real platform, which
+#      Linux cannot.
+#   2. The app still refuses to start cleanly, now because no cable is
+#      installed rather than because no backend exists. Asserted on the
+#      reason text, so a guard that fires for the wrong reason is a failure.
+#   3. PyInstaller bundles it all and ISCC compiles the installer.
 #
 # This exists because packaging/windows/ sat unbuilt from 2026-08-13 and
 # nobody could say whether the .iss even parsed. PyInstaller does not
 # cross-compile and the project has no Windows machine, so CI is the only
 # place this can be answered.
-#
-# A RED RUN HERE IS INFORMATION, NOT A REGRESSION. The .iss has never been
-# through ISCC.exe; its two hand-written Pascal Script calls
-# (SendMessageTimeoutA, ShellExecAsOriginalUser) are the likely first
-# failures. Read the log, fix the script, re-run.
 
 on:
   push:
@@ -55,24 +60,52 @@ jobs:
           .venv\Scripts\python.exe -m pip install --upgrade pip
           .venv\Scripts\pip.exe install -r requirements.txt pyinstaller
 
-      # The app must refuse to run here, cleanly. If this step ever passes
-      # silently on Windows it means the guard stopped working and a user
-      # would get a FileNotFoundError traceback on 'pw-dump' instead.
-      - name: Assert the app refuses to run on Windows, and says why
+      # Running these on Windows is not redundant with running them on Linux:
+      # the same assertions also exercise the real pycaw/comtypes imports and
+      # the real platform dispatch in routing.py, neither of which Linux can
+      # check.
+      - name: Test the Windows routing backend
+        shell: cmd
+        run: |
+          .venv\Scripts\python.exe tests\test_platform_guard.py
+          if errorlevel 1 exit /b 1
+          .venv\Scripts\python.exe tests\test_windows_routing.py
+          if errorlevel 1 exit /b 1
+          exit /b 0
+
+      # Linux cannot check this: pycaw has shipped two different return types
+      # from GetSpeakers() across versions, and assuming the wrong one once
+      # cost a round trip to an offline test machine. Here it either imports
+      # and enumerates or it does not.
+      - name: Check Core Audio enumeration against the real pycaw
+        shell: cmd
+        run: |
+          .venv\Scripts\python.exe -c "from assassin_live.audio.backends.windows import CoreAudio; c = CoreAudio(); e = c.render_endpoints(); print('render endpoints:', len(e)); [print('   ', n) for _, n in e]; print('default:', c.default_render_endpoint()); print('policy config:', 'yes' if c._policy_config() is not None else 'no')"
+          if errorlevel 1 exit /b 1
+          exit /b 0
+
+      # The app must refuse to run here, cleanly, and for the right reason:
+      # on a runner there is no virtual cable, which is a different refusal
+      # from the "no backend for this platform" one this used to get. If this
+      # step ever passes silently it means the guard stopped working.
+      - name: Assert the app refuses to run without a cable, and says why
         shell: cmd
         # Explicit errorlevel checks rather than &&/||: a non-zero exit is
         # the SUCCESS condition here, and cmd's operator chaining leaks the
         # original errorlevel through a trailing `|| echo`, failing the step
         # for doing exactly what it was asked to do.
         run: |
-          .venv\Scripts\python.exe tests\test_platform_guard.py
-          if errorlevel 1 exit /b 1
+          .venv\Scripts\python.exe -c "import sys; from assassin_live.audio import routing; r = routing.unsupported_reason() or ''; print(r); sys.exit(0 if 'cable' in r.lower() else 1)"
+          if errorlevel 1 (
+            echo ERROR: expected a 'no virtual cable' refusal, got something else >&2
+            exit /b 1
+          )
           .venv\Scripts\python.exe -m assassin_live --headless
           if errorlevel 1 (
-            echo OK: refused to start on Windows, as intended
+            echo OK: refused to start without a cable, as intended
             exit /b 0
           )
-          echo ERROR: the app started on Windows instead of refusing >&2
+          echo ERROR: the app started with no cable installed instead of refusing >&2
           exit /b 1
 
       # 6.4.3 specifically: 6.5.0+ added a paid commercial-license tier, so
@@ -138,9 +171,11 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: windows-unsigned-compile-check
+          name: windows-app-unsigned-no-models
           path: |
             dist/*.exe
             build/pyinstaller/dist/*.exe
           if-no-files-found: error
-          retention-days: 14
+          # 90 rather than the 14-day default: these get downloaded onto an
+          # offline test machine, and the first one expired before it could be.
+          retention-days: 90

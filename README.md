@@ -120,8 +120,14 @@ openly-licensed models (gtcrn, dpdfnet, dpdfnet_hr, dtln) are bundled into
 automatically — `apt install` and go, no manual step. `speechdenoiser` is
 excluded (its upstream license is unresolved, see `models/README.md`); add
 it yourself in `~/.local/share/music-assassin/models/` if you want it.
-Windows and mobile packaging are not yet possible — see
-`docs/ARCHITECTURE.md` §6 (Platform Reality Check).
+Windows builds exist (`scripts/build_windows.bat`, compiled on every push
+by `.github/workflows/windows-build.yml`) and the Windows routing backend is
+written (`assassin_live/audio/backends/windows.py`): it traps through a
+virtual audio cable such as VB-CABLE, which the user installs. What has
+**not** happened is an end-to-end run on real Windows hardware — CI runners
+have no audio endpoints, so no machine has yet played audio through it.
+Treat Windows as untested rather than finished. Mobile packaging is still
+not possible — see `docs/ARCHITECTURE.md` §6 (Platform Reality Check).
 
 ## Status
 

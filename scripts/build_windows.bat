@@ -4,10 +4,12 @@ REM build, bundles onnxruntime + tkinter, no system deps) + an Inno Setup
 REM installer that gets VB-CABLE onto the machine, giving the app a Windows
 REM equivalent of the PipeWire trap sink used on Linux.
 REM
-REM SCOPE: this builds a package, not a working app. The Windows routing
-REM backend does not exist yet (ROADMAP D3.3) — backends/base.py has the
-REM seam, nothing implements it for Windows. Do not read a successful build
-REM here as Windows support.
+REM SCOPE: the Windows routing backend exists as of ROADMAP D3.3
+REM (backends/windows.py), so this builds an app that can route audio --
+REM given a virtual audio cable on the machine. What a successful build here
+REM still does NOT prove: that routing works end to end on real hardware.
+REM CI runners have no audio endpoints at all, so only a real box can show
+REM that. See docs/ROADMAP.md D3.6.
 REM
 REM VB-CABLE: the public build should download it at install time against a
 REM pinned SHA-256 rather than bundle it (ROADMAP D3.4). BundleVBCable is
@@ -93,6 +95,10 @@ if exist "%ROOT%\packaging\icons\%PKG%.ico" set "ICON_ARG=--icon "%ROOT%\packagi
     --onefile ^
     --windowed ^
     --collect-all onnxruntime ^
+    --collect-all sounddevice ^
+    --collect-all _sounddevice_data ^
+    --collect-all pycaw ^
+    --collect-all comtypes ^
     --hidden-import tkinter ^
     --add-data "%ROOT%\assassin_live\ui\assets\icon.png;." ^
     --paths "%ROOT%" ^
