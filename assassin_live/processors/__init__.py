@@ -11,6 +11,9 @@ _MODEL_FILES = {
     "dpdfnet_hr": "dpdfnet2_48khz_hr.onnx",
     "dtln": ("dtln_model_1.onnx", "dtln_model_2.onnx"),
     "speechdenoiser": "speechdenoiser.onnx",
+    # Vocals sub-model cut out of StemgenRT's release asset by
+    # scripts/fetch_stemgen.py (processors/stemgen.py).
+    "stemgen": "stemgen_rt_vocals.onnx",
     "spleeter": ("spleeter_vocals.int8.onnx",
                  "spleeter_accompaniment.int8.onnx"),
 }
@@ -123,5 +126,8 @@ def create(name: str, models_dir: Path) -> StreamProcessor:
     if name == "dtln":
         from .dtln import DtlnProcessor
         return DtlnProcessor(str(paths[0]), str(paths[1]))
+    if name == "stemgen":
+        from .stemgen import StemgenProcessor
+        return StemgenProcessor(str(paths[0]))
     from .speechdenoiser import SpeechDenoiserProcessor
     return SpeechDenoiserProcessor(str(paths[0]))

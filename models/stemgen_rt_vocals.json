@@ -1,0 +1,20 @@
+{
+  "name": "stemgen",
+  "file": "stemgen_rt_vocals.onnx",
+  "runtime": "onnxruntime",
+  "type": "music-source-separation (vocals stem, causal)",
+  "architecture": "causal band-local/global recurrent complex-mask separator (StemgenRT 'causal-band-local-global-v1', descended from lucidrains' HS-TasNet); vocals sub-model only, cut out of the 3-model release asset by scripts/fetch_stemgen.py and verified bit-identical to the full graph",
+  "sample_rate": 44100,
+  "channels": 2,
+  "hop": 128,
+  "output_alignment": "previous input hop; first return is an invalid pre-roll hop (discarded by processors/stemgen.py)",
+  "license": "MIT (sweetspotsoundsystem/stemgen-rt — verified 2026-10-18; the ONNX file is a release asset of the MIT repo, no separate weights license). CAVEAT: trained on MUSDB18-HQ ('educational, non-commercial') and MoisesDB (CC BY-NC-SA 4.0). Not bundled into the .deb until that is decided.",
+  "source": "https://github.com/sweetspotsoundsystem/stemgen-rt/releases/tag/v0.7.0 (model.onnx, SHA-256 0a49388dd2a47986ab9a161c8764c22853b4d601c188ac052eb530f076d513c7); training code https://github.com/sweetspotsoundsystem/StemgenRT-5.8",
+  "benchmarks": {
+    "machine": "poison-ivy (Ryzen 9 9950X3D), app venv onnxruntime 1.27, 2026-10-22",
+    "ms_per_20ms_block": 1.88,
+    "rtf": 0.094,
+    "algorithmic_latency_ms": 5.8
+  },
+  "notes": "The first separator in this registry that is causal and block-synchronous: it fits the ~50 ms live path, unlike Spleeter (>=1.1 s). Upstream marks v0.7.0 quality_measured=False; v0.6.2 scored 5.45 dB vocals SDR on the maintainers' own panel. Measured here on one nasheed clip (Alhamdulillah, a100): SDR vs reference vocals 9.49 dB against 2.10 dB for the untouched mix, output lag 0 samples. Like every vocals-stem separator it drops sound effects along with the music. Spoken dialogue untested."
+}
