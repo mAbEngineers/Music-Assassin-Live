@@ -26,6 +26,12 @@ def main():
                          "(ROADMAP B3); off by default, same as the GUI")
     ap.add_argument("--no-bandlimit", action="store_true",
                     help="disable the ~20 Hz-20 kHz band-limit on the processed output (on by default)")
+    ap.add_argument("--limit-db", type=float, default=0.0, metavar="DB",
+                    help="suppression limit: how far any bin may be pulled "
+                         "down, any model (0 = unlimited, the default)")
+    ap.add_argument("--smoothing-ms", type=float, default=0.0, metavar="MS",
+                    help="how slowly a bin's gain may fall, against vocal "
+                         "loss and pumping (0 = off, the default)")
     ap.add_argument("--list-models", action="store_true")
     ap.add_argument("--recover", action="store_true",
                     help="clean up stale trap sinks and restore default sink")
@@ -62,6 +68,8 @@ def main():
     engine.set_midside(args.midside)
     engine.set_bandlimit(not args.no_bandlimit)
     engine.set_stereo(args.stereo)
+    engine.set_atten_limit(args.limit_db)
+    engine.set_smoothing(args.smoothing_ms)
     engine.start(routing.monitor_source, real.name)
     routing.adopt_volume()
     print(f"filtering -> {real.name}  (model: {proc.name}, Ctrl-C to stop)")

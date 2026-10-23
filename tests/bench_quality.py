@@ -132,6 +132,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from assassin_live.audio.bandlimit import BandlimitFilter  # noqa: E402
 from assassin_live.audio.engine import BLOCK, SAMPLE_RATE, _soft_limit  # noqa: E402
 from assassin_live.audio.midside import MidSideFilter  # noqa: E402
+from assassin_live.audio.maskshape import MaskShaper  # noqa: E402
 from assassin_live.audio.stereo import StereoRebuild  # noqa: E402
 from assassin_live.paths import models_dir, state_dir  # noqa: E402
 from assassin_live import processors  # noqa: E402
@@ -460,6 +461,10 @@ def run_chain(cfg: dict, x: np.ndarray,
         times.append((time.perf_counter() - t0) * 1000.0)
 
     wet = np.concatenate(out) if out else np.zeros(0, dtype=np.float32)
+    if cfg["mask"] and len(wet):
+        wet = shape_mask(x.mean(axis=1), wet,
+                         cfg["mask_exp"], cfg["mask_floor_db"],
+                         cfg["mask_attack_ms"], cfg["mask_release_ms"])
     wet_st = np.concatenate(out_st) if out_st else None
     t = np.array(times) if times else np.zeros(1)
     budget_ms = 1000.0 * BLOCK / SR
@@ -567,6 +572,101 @@ def apply_mix_stereo(dry_st: np.ndarray, wet: np.ndarray, mix_pct: float,
         w = np.repeat(wet[:n, None], 2, axis=1)
         mixed = dry_st[:n] * (1.0 - ramp) + w * wet_g * ramp
     return _soft_limit(mixed) if wet_g > 1.0 else mixed
+
+
+# ------------------------------------------------------------ mask shaping ----
+#
+# WHAT THIS IS FOR (ROADMAP B4, 2026-08-21): a "permissiveness" control that
+# changes how strict the filter is, rather than blending dry back in.
+#
+# All four shipped models are fixed ONNX graphs with no strictness input --
+# only speechdenoiser has one (atten_lim_db), and it is not redistributable.
+# But every one of them is a magnitude-mask enhancer, so the per-bin gain it
+# chose is recoverable after the fact as |Wet|/|Dry| (audio/stereo.py already
+# derives exactly this for the rebuild). Reshaping that array edits the
+# filter's own decision, per bin per frame, and works on every model without
+# touching a processor.
+#
+# SINCE 2026-10-22 THIS IS THE SHIPPING CODE. The math moved to
+# audio/maskshape.py, which the engine runs live off its measured _mask_lag;
+# shape_mask() below streams the clip through that same class after aligning
+# with estimate_lag, so a number measured here is a number the app produces.
+#
+# IT APPLIES A CORRECTION TO THE WET SIGNAL, NOT A RECONSTRUCTION FROM THE
+# MASK. The obvious formulation -- out = istft(shaped_mask * Dry) -- was
+# tried first and measured on 2026-08-21: on dtln it took dSI-SDR from
+# +1.07 to -3.26 dB and SAR from 2.75 to -1.75 dB AT IDENTITY SETTINGS,
+# i.e. before the knob did anything. The reason is that none of these
+# models is the pure magnitude mask that formulation assumes. dtln's second
+# stage refines in the time domain; dpdfnet is a spec-in/spec-out
+# DeepFilterNet variant that modifies phase; and both use framing unrelated
+# to the 512/256 used here (dtln 512/128 at 16 kHz, dpdfnet_hr 960/480).
+# Rebuilding the output from |Wet|/|Dry| throws all of that away.
+#
+# (audio/stereo.py derives the same mask and is NOT wrong to: it uses it to
+# shape the dry PAIR so the L:R ratio survives, where an imprecise mask
+# just means a slightly imperfect image. Reproducing the wet signal from it
+# is a far stronger demand on the same quantity.)
+#
+# So instead: multiply the wet spectrum by the ratio the knob asks for, and
+# add dry back only where the model left nothing to multiply. At identity
+# the correction is exactly 1 and the dry term exactly 0, so the output is
+# the model's own, sample for sample.
+
+
+def shape_mask(dry_mono: np.ndarray, wet: np.ndarray,
+               exponent: float, floor_db: float,
+               attack_ms: float = 0.0, release_ms: float = 0.0) -> np.ndarray:
+    """Reshape the chain's implied decision with the engine's own MaskShaper.
+
+    floor_db caps how far any bin may be pulled down (0 = uncapped).
+    release_ms/attack_ms (ROADMAP B4) bound how fast a bin's gain may fall
+    and rise; pumping and vocal-loss are a gain collapsing faster than a
+    syllable, a speed problem no reshaping of a fast-moving mask fixes.
+    exponent < 1 lets uncertain bins through, > 1 is stricter.
+
+    The smoothing is safe to sweep. The version that lived here until
+    2026-10-22 smoothed |Wet|/|Dry| itself, and a bin where dry read near
+    zero (bin 223 of male_lead__Colors_FLOW_CodeGeassOP1 at 3.84 s, -124 dB
+    under its frame's loudest bin) left a clipped 8x value that outlived the
+    release and burst out of a later, normal frame. MaskShaper smooths the
+    two powers instead and caps the gain at 1 — audio/maskshape.py has the
+    reasoning, tests/test_mask_shaper.py rebuilds that case.
+
+    One behaviour differs from the old probe: a bin the model BOOSTED above
+    its dry level is now capped back to it whenever shaping is on.
+
+    Identity (exponent=1, floor_db=0, attack_ms=0, release_ms=0) returns
+    the input unchanged.
+    """
+    sh = MaskShaper(SR)
+    sh.set_params(floor_db=floor_db, release_ms=release_ms,
+                  attack_ms=attack_ms, exponent=exponent)
+    if sh.identity:
+        return wet
+    # Positive lag = wet TRAILS dry (align()'s convention), so dry is
+    # delayed to meet it — what the engine's _mask_lag pad does. Until
+    # 2026-10-22 this was inverted (dry[lag:], i.e. dry ADVANCED), pairing
+    # every frame with dry 2*lag away: ~100 ms on dpdfnet_hr. Every mask_*
+    # number recorded before that date was measured misaligned.
+    lag = estimate_lag(wet, dry_mono)
+    if lag > 0:
+        d = np.concatenate([np.zeros(lag, dtype=np.float32), dry_mono])
+    else:
+        d = dry_mono[-lag:]
+    n = min(len(d), len(wet))
+    # The shaper takes the dry PAIR (it makes up removed bins per channel);
+    # the bench's wet is mono, so a duplicated mono dry is the same thing.
+    d_st = np.repeat(d[:n, None].astype(np.float32), 2, axis=1)
+    out = []
+    for i in range(0, n, BLOCK):
+        _, y = sh.process(d_st[i:i + BLOCK], wet[i:i + BLOCK])
+        out.append(y)
+    # The last half-frame is still held; handed back unshaped, as the engine
+    # does on switch-off, so the output keeps the input's length.
+    out.append(sh.drain()[1])
+    out.append(wet[n:])
+    return np.concatenate(out).astype(np.float32)
 
 
 # -------------------------------------------------------------- alignment ----
@@ -1105,6 +1205,8 @@ BOOLS = {"on": True, "off": False, "true": True, "false": False,
          "1": True, "0": False, "yes": True, "no": False}
 
 DEFAULT_CFG = {"model": "dpdfnet_hr", "midside": False, "midside_exp": 4.0,
+               "mask": False, "mask_exp": 1.0, "mask_floor_db": 0.0,
+               "mask_attack_ms": 0.0, "mask_release_ms": 0.0,
                "bandlimit": True, "stereo": False, "mix_pct": 100.0,
                "atten_db": 0.0}
 
@@ -1148,6 +1250,11 @@ def config_id(cfg: dict) -> str:
         parts.append(f"mix{cfg['mix_pct']:g}")
     if cfg["atten_db"]:
         parts.append(f"att{cfg['atten_db']:g}")
+    if cfg["mask"]:
+        parts.append(f"mask{cfg['mask_exp']:g}"
+                     + (f"f{cfg['mask_floor_db']:g}" if cfg["mask_floor_db"] else "")
+                     + (f"a{cfg['mask_attack_ms']:g}" if cfg["mask_attack_ms"] else "")
+                     + (f"r{cfg['mask_release_ms']:g}" if cfg["mask_release_ms"] else ""))
     return "+".join(parts)
 
 

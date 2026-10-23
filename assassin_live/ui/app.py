@@ -110,6 +110,7 @@ class App:
         self.stereo_enabled = saved.get("stereo_enabled", False)
         self.bandlimit_enabled = saved.get("bandlimit_enabled", True)
         self.atten_db = saved.get("atten_db", 0.0)
+        self.smoothing_ms = saved.get("smoothing_ms", 0.0)
         self._initial_pipeline = saved.get("pipeline", "dpdfnet_hr")
         self.output_map: dict[str, str] = {}
 
@@ -179,6 +180,7 @@ class App:
                 "stereo_enabled": self.stereo_enabled,
                 "bandlimit_enabled": self.bandlimit_enabled,
                 "atten_db": self.atten_db,
+                "smoothing_ms": self.smoothing_ms,
             }))
         except OSError:
             pass  # best-effort; a failed save shouldn't block quitting
@@ -222,20 +224,13 @@ class App:
         the difference between a panel that is a little taller than drawn
         and one that silently drops its last row off the bottom — which is
         exactly what happened to the suppression-limit row the first time.
-
-        The optional row is packed while measuring so its space is reserved
-        even while it is hidden. Selecting `speechdenoiser` then reveals a
-        control in space that was already there, rather than resizing the
-        window under the pointer.
         """
-        self.atten_card.pack(fill=tk.X, pady=(self.px(2), 0))
         self.root.update_idletasks()
         body_h = max(self._column_height(self.left),
                      self._column_height(self.right))
         need = (self.px(HEADER_H) + self.px(STATUS_H) + 2
                 + body_h + 2 * self.px(13))
         self.root.geometry(f"{self.px(WIN_W)}x{max(self.px(WIN_H), need)}")
-        self._update_atten_visibility()
 
     def _column_height(self, column) -> int:
         """What a column's cards need, including the gap between them."""
@@ -420,34 +415,36 @@ class App:
         return sw
 
     def _build_atten_row(self, parent):
-        """Only `speechdenoiser` has a suppression limit to set.
+        """The two permissiveness controls (ROADMAP B4, C12), for every model.
 
-        It appears as a fourth row inside this card rather than as a card of
-        its own, so selecting that pipeline no longer inserts a block into
-        the window and shifts everything below it. The card's height is
-        fixed, so the row lands in slack that is already there.
+        Suppression limit was speechdenoiser's alone until the mask shaper
+        (audio/maskshape.py) gave every model the same floor; smoothing slows
+        how fast a bin's gain may fall, which is what the corpus tags as
+        vocal-loss and pumping. Both read 0 = off, today's behaviour.
         """
         self.atten_card = tk.Frame(parent, bg=PANEL)
+        self.atten_card.pack(fill=tk.X, pady=(self.px(2), 0))
         tk.Frame(self.atten_card, bg=HAIR, height=1).pack(fill=tk.X)
-        row = tk.Frame(self.atten_card, bg=PANEL)
-        row.pack(fill=tk.X, pady=(self.px(7), 0))
-        tk.Label(row, text="Suppression limit", font=self.f_body, bg=PANEL,
-                 fg=TEXT).pack(side=tk.LEFT)
-        self.atten_val_lbl = tk.Label(row, text=self._atten_label(self.atten_db),
-                                      font=self.f_mono, bg=PANEL, fg=RED)
-        self.atten_val_lbl.pack(side=tk.RIGHT)
-        self.atten_slider = HSlider(row, width=self.px(96), height=self.px(22),
-                                    color=RED, track=TRACK, bg=PANEL,
-                                    value=self.atten_db, minv=0, maxv=40,
-                                    command=self._on_atten_change,
-                                    scale=self.scale)
-        self.atten_slider.pack(side=tk.RIGHT, padx=(0, self.px(10)))
+        self.atten_slider, self.atten_val_lbl = self._slider_row(
+            "Suppression limit", self.atten_db, 40, self._atten_label,
+            self._on_atten_change, top=7)
+        self.smooth_slider, self.smooth_val_lbl = self._slider_row(
+            "Smoothing", self.smoothing_ms, 150, self._smoothing_label,
+            self._on_smoothing_change, top=5)
 
-    def _update_atten_visibility(self):
-        if self.model.get() == "speechdenoiser":
-            self.atten_card.pack(fill=tk.X, pady=(self.px(2), 0))
-        else:
-            self.atten_card.pack_forget()
+    def _slider_row(self, title, value, maxv, label, command, top):
+        row = tk.Frame(self.atten_card, bg=PANEL)
+        row.pack(fill=tk.X, pady=(self.px(top), 0))
+        tk.Label(row, text=title, font=self.f_body, bg=PANEL,
+                 fg=TEXT).pack(side=tk.LEFT)
+        val = tk.Label(row, text=label(value), font=self.f_mono, bg=PANEL, fg=RED)
+        val.pack(side=tk.RIGHT)
+        slider = HSlider(row, width=self.px(96), height=self.px(22),
+                         color=RED, track=TRACK, bg=PANEL,
+                         value=value, minv=0, maxv=maxv,
+                         command=command, scale=self.scale)
+        slider.pack(side=tk.RIGHT, padx=(0, self.px(10)))
+        return slider, val
 
     def _build_signal(self, parent):
         card = self._card(parent, SIGNAL_H)
@@ -636,6 +633,16 @@ class App:
         if self.engine:
             self.engine.set_atten_limit(value)
 
+    @staticmethod
+    def _smoothing_label(value: float) -> str:
+        return "off" if value < 1 else f"{round(value)} ms"
+
+    def _on_smoothing_change(self, value):
+        self.smoothing_ms = value
+        self.smooth_val_lbl.config(text=self._smoothing_label(value))
+        if self.engine:
+            self.engine.set_smoothing(value)
+
     # -- processing switches -----------------------------------------------------
     # The Switch reports the state it moved to, so these no longer flip a
     # variable and then repaint a button from it — the widget is the state,
@@ -667,7 +674,6 @@ class App:
 
     # -- pipeline / output pickers (live-switchable) -----------------------------
     def _on_model_change(self, _evt=None):
-        self._update_atten_visibility()
         if not (self.enabled and self.engine):
             return
         try:
@@ -798,6 +804,7 @@ class App:
             engine.set_bandlimit(self.bandlimit_enabled)
             engine.set_stereo(self.stereo_enabled)
             engine.set_atten_limit(self.atten_db)
+            engine.set_smoothing(self.smoothing_ms)
             engine.start(self.routing.monitor_source, real.name)
             self.routing.adopt_volume()
             self._result = ("on", engine, real)
