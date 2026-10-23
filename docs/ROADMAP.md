@@ -1,5 +1,7 @@
 # Music Assassin Live — Roadmap
 
+> **New here? Start with `docs/CURRENT_STATE.md`** — one page on what is true now; this file is the full record.
+
 Written 2026-08-13. Compiles four separate handover sessions (README
 professionalization, Windows packaging investigation, release/publishing
 status, settings persistence, top-level repo handover) into one plan.
@@ -434,6 +436,42 @@ runs in parallel, and drops into this app through the same processor interface
 if it produces weights. RT-STT still has no code release — check quarterly, do
 not wait on it.
 
+**Superseded, 2026-10-18 — the weights exist.** StemgenRT v0.7.0: MIT, one
+32 MB FP32 ONNX (opset 17, standard ops), and its trainer `StemgenRT-5.8` is
+this same lucidrains HS-TasNet lineage renamed. Measured on the release asset:
+the vocals subgraph extracts to 11 MB / 2.72M params with output bit-identical
+to the full graph, 0.40 ms per 128-sample hop (RTF 0.14, 1 thread, p99
+0.48 ms), ≈5.8 ms algorithmic latency, MUSDB18 vocals median 5.32 dB against
+−4.49 dB for the untouched mix. This stops being a training project and becomes
+a wrap-and-sweep task. Interface, caveats (not yet run on this corpus, spoken
+dialogue untested, non-commercial training data) and integration notes in
+`docs/RESEARCH_PRIOR_ART.md` §1.2. It does **not** address SFX — see A4.
+
+**Wrapped, 2026-10-22.** It is now `processors/stemgen.py` (pipeline
+`stemgen`), installed by `scripts/fetch_stemgen.py`. The script checks the
+SHA-256, cuts out the vocals subgraph, and checks it is bit-identical to the
+full graph over 300 hops before installing anything. The processor is
+`wants_stereo` at 44.1 kHz and count-aligned (it discards the pre-roll hop);
+its measured lag is 0. Cost: 1.88 ms per 20 ms block. It is not bundled in
+the .deb until the training-data question is settled.
+
+**`male_lead` result, 2026-10-23 (16 pairs).** The CSV is
+`bench/stemgen/shaper_male_lead.csv`.
+
+| | dSI-SDR | vocal_ret | worst band | music_supp | musNoise | width |
+|---|---|---|---|---|---|---|
+| `dpdfnet_hr` | +0.33 | −8.47 | −13.0 (air) | **−48.4** | 6.81 | −163 dB |
+| `stemgen` | **+9.94** | **−0.00** | −0.43 (sub) | −23.9 | **−6.47** | **−11 dB** |
+| offline ceiling | +22.95 | | | −46.4 | | |
+
+- StemgenRT reaches 43 % of the offline ceiling's dSI-SDR, against 1.4 %
+  for `dpdfnet_hr`.
+- It loses no voice in any band, and it keeps the stereo image.
+- What it gives up: it removes about half as much music in dB. Music sits at
+  −24 dB instead of −48, with the worst clip at −9.9 dB.
+- This is one category, and the one where `dpdfnet_hr` does worst. The
+  whole-corpus run and `nasheed` decide whether it becomes the default.
+
 ### A3. Make the model registry data-driven
 
 `docs/ARCHITECTURE.md` §3 promises "a new model needs no app code changes."
@@ -455,6 +493,46 @@ Predicting the *music* stem and computing `vocals = mix − music` preserves SFX
 is `UVR_MDXNET_KARA_2` — RTF ~0.84, 2.8 GB. Not realtime, not shippable.
 Keep on the research side; revisit only if a fast instrumental-prediction model
 appears.
+
+**Revisit note, 2026-10-18 — a causal separator arrived and does not unpark
+this.** A4's premise is a model that estimates *music* without catching SFX.
+StemgenRT (A2) estimates drums, bass and vocals, so `mix − drums − bass` still
+leaves every melodic instrument, and the residual that would carry SFX carries
+that melodic content with it. The subtraction architecture is still right; the
+stem taxonomy on offer is not. What would unpark it: a causal three-way
+dialogue/music/effects model (the "cinematic" class — LiteCASS has no weights,
+the DnR Demucs model is offline), or a classifier gating add-back from the
+residual (§11: YAMNet at 0.5 % leakage, now ONNX-convertible, and an easier
+problem on the residual than on the full mix since vocals, drums and bass are
+already gone). Nearest route that works *today* is the browser look-ahead
+companion, which has no realtime constraint — `docs/RESEARCH_PRIOR_ART.md` §1.5.
+
+**An offline answer now exists, 2026-10-23.** The sibling `Music-Assassin`
+repo keeps effects offline and the result was preferred by ear. Measured —
+leak is effects energy outside the inserted test pieces (lower better), keep is
+SI-SDR inside them (higher better): **CDX23, no cleanup, −24.9 dB / +3.6 dB**;
+MRX −16.4 / −0.3 raw, and −21.3 / −1.3 with music over-subtraction at β = 1.
+A Wiener re-filter using the model's own stems moved leakage by less than
+0.5 dB — it does nothing. Both models are non-causal, so none of it ships live
+as-is; what transfers is the measurements, the mixing design (separate effects
+path, level matching, add back *after* any gate) and the leakage-test method.
+Four live routes, cheapest first, in `docs/LIVE_SFX_HANDOVER.md` §4.
+
+**Handover from the offline app, 2026-10-23 — `docs/LIVE_SFX_HANDOVER.md`.**
+The offline app (`Music-Assassin`, `71a12d1`) now keeps sound effects, and a
+listener preferred it to voice-only. It does this with a separate MRX or
+CDX23 effects path. Neither model is causal, so nothing carries over at
+today's latency. What does carry over:
+- a ground-truth leakage test: CDX23 leaks music at −25 dB, MRX at −16 dB,
+  and MRX at −21 dB after music over-subtraction;
+- the mixing design: effects bypass the gate and are level-matched;
+- four ranked routes for live:
+  1. a music-presence gate;
+  2. the classifier-on-residual route above;
+  3. a declared-latency "movie mode", which needs Q3 and latency reporting;
+  4. a distilled causal student.
+
+Read its §6 before re-opening any SFX mechanism.
 
 ### A5. Seed DPDFNet state from its ONNX normalization metadata ✅ done
 
@@ -796,6 +874,100 @@ the opposite of the standing product judgement.
 **Then by ear**, which is what Q1 was really asking. Not blocking any more:
 the tag counts justify building it, and the sweep decides whether it ships.
 
+**Correction, 2026-09-08 — `release_ms`/`attack_ms` are not the small
+change this section describes.** A first implementation (in
+`tests/bench_quality.py`'s `shape_mask()`, uncommitted) hit three bugs in
+verification before reaching real audio, the last one unresolved: `mask` is
+a division, meaningless wherever `Dry` is near-zero in a bin, and a stale
+smoothed value from one such moment can persist through the release window
+and produce an amplification burst in a *later* frame that looks completely
+normal on its own — a per-bin reliability gate fixed the frame that exposed
+it (a −124 dB spectral null in an otherwise loud frame) but not the general
+case. This needs a real fix for state persisting across frames, not the
+sweep this section describes as the remaining work. `floor_db` is
+unaffected — it is stateless and already verified safe on real audio. Full
+account in HANDOVER.md, "The permissiveness knob."
+
+**Correction, 2026-10-18 — the bug has a fix, and this section is not an SFX
+mechanism.** Two separate things.
+
+*The fix.* Smooth `|Wet|²` and `|Dry|²` **separately**, same α per bin and
+frame, then `g = clip(sqrt(P_W / (P_D + ε)), g_floor, 1)` — rather than
+smoothing the ratio, which is what `shape_mask()` did. The ratio of smoothed
+powers is Dry-energy-weighted, so a near-silent frame contributes almost
+nothing to either accumulator and no stale value survives into a later frame:
+exactly the failure above. Clamping at 1 makes an amplification burst
+structurally impossible rather than merely unlikely — de-musicing never needs
+gain > 1. The same clamp belongs in `audio/stereo.py`, where `MAX_GAIN = 8.0`
+(line 61) permits 18 dB of amplification out of the same division. Asymmetric
+constants: open fast (τ ≈ 5–10 ms, which preserves onsets), close slow
+(τ ≈ 80–150 ms plus a hold). Recipe and references in
+`docs/RESEARCH_PRIOR_ART.md` §1.6.1.
+
+*Measure, do not assume.* Closing slow holds gain open through
+inter-syllable gaps, which is where music leaks, so sparse material has to be
+measured rather than inferred from dense. An earlier nasheed sweep appeared to
+show the noise trade reversing there; **that figure is void**, along with every
+other B4 sweep number before 2026-10-22, because the probe's alignment in
+`shape_mask()` was inverted (retraction in HANDOVER). Re-measure before
+relying on any of it.
+
+*Scope.* This section is correctly scoped as a quality lever and nothing in it
+targets sound effects. A "permissiveness knob" that loosens the music/vocal
+boundary so SFX return was discussed at length (2026-08-21 to 09-08) and
+written up in HANDOVER as though B4 served it. It does not and cannot: the
+exponent and `floor_db` are monotonic functions of one scalar per bin, so they
+preserve the model's own ranking of bins, and drums sit beside SFX in that
+ranking. §11 records the measured consequence (~8 % music-leakage plateau).
+Do not re-scope B4 toward SFX; keeping SFX is A4's problem, not this one.
+
+**Built, 2026-10-22 — in the engine, all models.** The code is
+`audio/maskshape.py` (`MaskShaper`): `floor_db`, `release_ms`, `attack_ms`
+and `exponent`, applied after the processor on both the mono and the
+wants_stereo path.
+
+- **Smoothing.** Both powers are smoothed with the same coefficient. A bin
+  whose dry drops 40 dB below its own running level holds its state instead
+  of updating, which the hole test showed was needed.
+- **Correction.** The gain is capped at 1, and it is applied as a correction
+  to wet with a dry residual. The mask is left unclipped, so no bin leaves
+  louder than its dry.
+- **Alignment.** Output is count-aligned. Switching the shaper on or off
+  mid-stream keeps the engine's dry/wet pairing; a test checks this with a
+  mutation.
+- **Cost.** Bypassed outright at identity. When active it adds 5.3 ms of
+  framing delay.
+- **Tests.** `tests/test_mask_shaper.py` rebuilds the old burst case. Away
+  from silence edges the worst out/dry is 0.88. Edge frames read up to 1.25
+  from window smear, the same smear a stateless gain held between 0.89 and 1
+  shows there.
+- **Bench.** `shape_mask()` in the bench now streams through the same class.
+  Its alignment was **inverted** before this: dry was advanced instead of
+  delayed, so every earlier `mask_*` number was measured 2× the model's lag
+  out of step. That is 100 ms on `dpdfnet_hr` and ~16–32 ms on
+  `dtln`/`gtcrn`, all against a 10.7 ms analysis window. That includes the
+  "`dpdfnet_hr` is ruled out for this mechanism" verdict, which has to be
+  re-measured before it is believed.
+
+**First aligned sweep, `male_lead`, 2026-10-23.**
+
+On `dpdfnet_hr`, each control is a trade:
+
+| change | music suppression | voice | dSI-SDR | other |
+|---|---|---|---|---|
+| `release_ms=80` | −48 → −35 dB | +1.0 dB retention | 0.33 → 0.76 | musical noise 6.8 → 5.0 |
+| `floor_db=20` | caps at −20 dB | vocal_ret −8.5 → −5.6 | → +4.0 | musical noise rises to 14.1 |
+
+On `stemgen` every shaper setting lowers dSI-SDR. Release does reduce
+musical noise, but StemgenRT already loses no voice, so there is little left
+for the shaper to fix there.
+
+Conclusions so far:
+- The shaper is a `dpdfnet_hr` control. It should stay off by default on
+  `stemgen`.
+- The old "ruled out on `dpdfnet_hr`" verdict does not hold.
+- `nasheed` is still running.
+
 ### B9. Give the top octave back — the damage is concentrated there
 
 Whole-corpus per-band vocal damage for `dpdfnet_hr`, sub/low/mid/high/air:
@@ -849,9 +1021,15 @@ panel is now a shape that has room for them (C11).
 
 1. **Suppression floor** (`floor_db`, from B4) — one slider, all models. The
    existing "Suppression Limit" row already has this shape, and would stop
-   being a `speechdenoiser`-only oddity.
+   being a `speechdenoiser`-only oddity. **Built 2026-10-22:** the row is
+   always visible. `speechdenoiser` still receives the limit natively; on
+   every other model it sets the shaper's floor, never both. Headless flag:
+   `--limit-db`.
 2. **Smoothing** (`release_ms`, from B4) — one slider. The control that
-   trades "a syllable survives" against "a residual warbles".
+   trades "a syllable survives" against "a residual warbles". **Built
+   2026-10-22:** 0–150 ms, saved as `smoothing_ms`; headless flag
+   `--smoothing-ms`. Both default to off until the sweep and a listen pick
+   values.
 3. **Keep air above N kHz** (from B9) — a crossover and an amount, and the
    only control that addresses the complaint the by-ear pass keeps
    returning: it still misses some audio.
@@ -1928,6 +2106,103 @@ entry ticket to a Windows APO later. Not near-term.
 
 ## 9. Sequenced plan
 
+### Current order — revised 2026-10-23
+
+**This section was rewritten the same day it was written.** A first draft
+listed the engine fix, the StemgenRT wrap and the mask shaper as pending; all
+three landed in the working tree while it was being drafted. What follows is
+reconciled against the tree as of 2026-10-23. Effort figures are estimates.
+**Nothing below is committed.**
+
+**What landed — uncommitted, in the working tree:**
+
+| what | where | state |
+|---|---|---|
+| FIFO caps sized from the processor | `_max_out = BLOCK * BASE_FIFO_BLOCKS + 2 * held`, `held` from `latency_samples` rescaled to 48 kHz (`engine.py:205-224`) | the review's §2.2 fix, as specified |
+| Paired dry trimmed with the wet | `engine.py:816-817` computes the cut instead of slicing blind | the review's §2.3 fix |
+| Measured per-processor lag | new `audio/lag.py`, with `measured`/`measuring`/`unmeasured` states | replaces the mono-only heuristic (review §2.7) |
+| Plumbing test | `tests/test_engine_chunked.py`, wired into `run_tests.sh`'s hardware-free list | the test whose absence hid §2.2 |
+| StemgenRT processor | `processors/stemgen.py`, `scripts/fetch_stemgen.py`, `models/stemgen_rt_vocals.json`, registered as `stemgen` | wrapped and benched here |
+| Mask shaper | `audio/maskshape.py` + `tests/test_mask_shaper.py`, moved out of `bench_quality.py` | B4's floor and smoothing as real code |
+
+StemgenRT's model card records the numbers that matter: **1.88 ms per 20 ms
+block, RTF 0.094, 5.8 ms algorithmic latency, 0 samples output lag** on this
+machine, and on one nasheed clip **9.49 dB vocals SDR against 2.10 dB for the
+untouched mix**. That is the ~1 dB separation floor moving — on one clip. The
+card also records two things that are *not* done: **spoken dialogue is
+untested**, and the training data (MUSDB18-HQ, MoisesDB CC BY-NC-SA) is
+non-commercial, so it is **not bundled into the `.deb`** until that is decided.
+
+**0. Land it.** Now the largest item here: nine modified files and nine
+untracked ones, including three new modules and two new test files, all of it
+expensive to reconstruct and sitting in a working tree on a network mount.
+`dialog.md` is still undecided.
+
+**1. Verify what landed.** Run the whole hardware-free suite, not just the two
+new files — `engine.py` changed by ~180 lines on the path every model uses, and
+`ui/app.py` and `__main__.py` changed with it. The specific thing to confirm is
+the review's §2.2 table (20 / 100 / 1000 ms chunk → processed share), since
+that is what the fix was for. The `spleeter` stopgap an earlier draft of this
+section called for is **obsolete**: the real fix landed instead.
+
+`tests/test_engine_chunked.py` and `tests/test_mask_shaper.py` both **pass**
+(run 2026-10-23, `.venv/bin/python tests/<name>.py` — note they are scripts,
+not importable modules, and `pytest` is not installed in the venv). That is
+the two new files only; the rest of the hardware-free suite has not been run
+against these changes.
+
+**2. The spoken-dialogue gate on StemgenRT.** ~1 hour, and still the cheapest
+decision on the list. The card says untested. A MUSDB18-trained model may not
+recognise speech as "vocals" at all, which decides whether `stemgen` becomes a
+general default or a music-only option. Do it before the corpus sweep.
+
+**3. Sweep StemgenRT against `dpdfnet_hr`. Partly done — read the results
+before deciding the default.** The `male_lead` sweep is in, 16 clip/ratio
+pairs: `stemgen` gains **+9.9 dB** of voice with **0 dB** voice lost and the
+stereo image **kept**, against `dpdfnet_hr`'s +0.3 dB, −8.5 dB and a collapsed
+image. The cost is music left behind — **−24 dB against −48 dB**, twice as
+much in dB — which is the trade the standing product judgement has to price,
+not a tie-break the harness can make. Two runs remain and they decide the
+default: the whole-corpus comparison and the `nasheed` sweep, both writing to
+`~/.local/state/music-assassin/bench/stemgen/`. Note while reading them that
+`test_stereo_rebuild` is timing-based and its result means nothing while a
+sweep is running.
+
+**4. Sweep the mask shaper.** 1 day, after item 3. `maskshape.py` exists and
+its unit tests assert the invariants (never amplify, count-aligned); what is
+untested is the *audible* trade. Sweep the sparse corpus specifically, and
+measure rather than assume: an earlier nasheed run appeared to show the noise
+trade reversing on sparse material, but **that number is void** — the probe's
+alignment in `shape_mask()` was inverted, which voids every B4 sweep figure
+before 2026-10-22 (retraction in HANDOVER, "The permissiveness knob"). Tune
+against whichever model wins item 3, not `gtcrn`/`dtln`; the one effect
+measured since is that the floor and smoothing **help `dpdfnet_hr` and hurt
+`stemgen`**, which makes the order here matter. No exponent tuning. See B4's
+2026-10-18 correction.
+
+**5. Resolve the licensing question.** Blocks shipping `stemgen` at all and
+cannot be settled by measurement: MIT code, non-commercial training data. §10.
+
+**6. Latency reporting — the experiment, then the decision.** ~half a day for
+the experiment: does a player actually compensate when the sink reports its
+latency? It gates the "movie mode" SFX route and the lip-sync defect affecting
+video users today (review §2.5). `docs/LIVE_SFX_HANDOVER.md` §7 makes it
+decision #1 there too.
+
+**7. SFX — no longer an open question, now a routing choice.** The offline
+sibling repo keeps effects and the result was **preferred by ear**; see
+`docs/LIVE_SFX_HANDOVER.md`. What does not transfer is the models — MRX and
+CDX23 are both non-causal. Four live routes are ranked there cheapest first,
+and its §7 decisions are the real gate, above all whether effects *under*
+music matter enough to pay for a high-latency mode: the cheap routes keep
+effects only where music is absent.
+
+**Deliberately deferred:** exponent tuning, the `floor_db` listening set,
+review §2.4 fail-closed mode, VAD gating, the latency-reporting
+*implementation*, and the 3-way bench fixture — route-dependent, and
+`LIVE_SFX_HANDOVER.md` §2.2 already specifies a reusable leakage test to build
+it from.
+
 ### Phase 1 — Clear the tree ✅ mostly done
 
 1. ~~Test 0.1.4 stream recovery; run the regression suite; commit.~~ Done —
@@ -2058,6 +2333,28 @@ trades for the image, and the default flips on that. The only judgement left
 is the fallback — if the trade is bad, is shipping mono *and saying so in the
 UI* acceptable, or does that make the product not worth shipping?
 
+**Q6 (blocks shipping `stemgen`). Does the training-data licence allow
+distribution?** Added 2026-10-23. StemgenRT's code and release asset are MIT,
+and the OSI gate passes on that. But it was trained on MUSDB18-HQ
+("educational, non-commercial") and MoisesDB (CC BY-NC-SA 4.0), and the model
+card already records "not bundled into the `.deb` until that is decided".
+This cannot be settled by measurement, and it is the only thing between a
+measured quality win (RTF 0.094, 9.49 dB vocals SDR on one clip against 2.10 dB
+for the mix) and users having it. Options as far as they go: bundle anyway and
+document the risk, ship it as a first-run download rather than in the package,
+restrict it to a non-commercial build, or retrain on permissive data (A2's
+original plan, now with a working trainer available).
+
+**Q7 (decides the SFX route). Do effects *under* music matter enough to pay
+for a high-latency mode?** Added 2026-10-23. The cheap live routes — a
+music-presence gate, or a classifier gate on the residual — keep effects only
+where music is absent, and lose anything sitting underneath it.
+`docs/LIVE_SFX_HANDOVER.md` §4 prices all four routes; its §7 raises this as
+the decision that picks between them, and it interacts with Q3's latency
+ceiling, since "movie mode" needs roughly 0.5–1.5 s. Offline add-back is
+already built and was preferred by ear, so the question is no longer whether
+SFX are worth keeping but how much latency and CPU that is worth.
+
 ---
 
 ## 11. Dead ends — measured, rejected, do not re-explore
@@ -2072,6 +2369,12 @@ UI* acceptable, or does that make the product not worth shipping?
   transient and noisy exactly like SFX. A semantic classifier (YAMNet: 0.5 %
   leakage) is the only thing that works — and that's a research-repo item,
   currently TF-based while this app is onnxruntime-only.
+  **Scope clarified 2026-10-23:** this rejects *pure-DSP* add-back, not SFX
+  add-back as such. Model-based add-back works and was preferred by ear —
+  CDX23 reaches −24.9 dB leakage at +3.6 dB keep offline
+  (`docs/LIVE_SFX_HANDOVER.md` §2.2). The dead end is hand-built masks over one
+  scalar per bin, for the reason given: drums and SFX are indistinguishable in
+  that representation.
 - **Synchronous Audio Router** as a VB-CABLE replacement: needs an ASIO host
   component, worse unsigned-driver UX, adds Steinberg SDK license surface.
 - **OpenVINO execution provider** for the sherpa path: ~16 % faster on raw

@@ -1,5 +1,7 @@
 # Handover — current state
 
+> **New here? Start with `docs/CURRENT_STATE.md`** — one page on what is true now; this file is the full record.
+
 Updated 2026-08-20. **This file is deliberately short.** It covers only where
 things stand *right now* and what to do next. The plan, the reasoning, the
 measured findings and the list of dead ends all live in
@@ -39,6 +41,14 @@ writes `.git/COMMIT_EDITMSG` and cannot read it back over the gvfs/sftp
 mount. It worked earlier the same day and then stopped, so it is the mount,
 not the repo. The workaround that does work is `git commit-tree` +
 `git update-ref`; committing from the machine that owns the repo avoids it.
+
+**Simpler workaround, found 2026-10-23: `git commit -F <file>` works if the
+file is on local disk.** `-F -` (stdin, via heredoc) fails with the error
+above; `-F /tmp/.../msg.txt` succeeded four times in a row in the same
+checkout, in the same session, minutes apart. So the failing step is reading
+a message back through the mount, and writing the message outside the mount
+is enough — `commit-tree` + `update-ref` is not needed for this. Keep the
+message files off the mount and out of the repo.
 
 **The `.deb` cannot be built over the gvfs mount either**, and the errors
 point nowhere near packaging. PyInstaller's `--add-data` rejects any source
@@ -150,8 +160,35 @@ producing candidates to compare with it.
 
 ## What to do next
 
+> **Current order — revised 2026-10-23. The items below keep their numbers,
+> because other items cross-reference them, but the ordering and much of the
+> status is superseded by ROADMAP §9's "Current order" — read that first.**
+>
+> A lot landed in the working tree on 2026-10-22/23 and **none of it is
+> committed**: the engine now sizes its FIFO caps from the processor's
+> `latency_samples` (the review's §2.2 fix), trims the paired dry with the wet
+> (§2.3), measures per-processor lag in a new `audio/lag.py`, and has a
+> plumbing test (`tests/test_engine_chunked.py`) wired into `run_tests.sh`.
+> StemgenRT is wrapped as the `stemgen` processor and benched here at RTF
+> 0.094 / 5.8 ms, with 9.49 dB vocals SDR on one nasheed clip against 2.10 dB
+> for the untouched mix. B4's floor and smoothing moved out of
+> `bench_quality.py` into `audio/maskshape.py` with their own tests.
+>
+> So items 5 and 7 are largely *built* rather than pending, and item 5's own
+> "immediate next step" is marked superseded. What is still open: StemgenRT on
+> **spoken dialogue** (untested, ~1 hour, gates everything else about it), the
+> corpus sweep, the mask-shaper sweep on sparse material, the non-commercial
+> **training-data licence** that blocks bundling it, and the latency-reporting
+> experiment. Read the scope correction at the head of "The permissiveness
+> knob" below before touching B4, and `docs/LIVE_SFX_HANDOVER.md` before
+> touching SFX — offline add-back works and was preferred by ear, which turns
+> SFX from an open question into a routing choice. Effort estimates and the
+> divergences from the review's own suggested order are in ROADMAP §9; the
+> review itself is `docs/RESEARCH_PRIOR_ART.md`.
+
 Reordered 2026-08-20. The first three come out of the listening session and
-displace what used to be first here.
+displace what used to be first here. **Item 5 updated 2026-09-08** — see
+"The permissiveness knob" below for what actually happened to B4.
 
 **1. Fix the flaky `test_stereo_rebuild`.** Cheapest item on the list and it
 gates the credibility of everything else: while it fails intermittently, no
@@ -184,16 +221,30 @@ the app. Every ranking so far has been sighted, and the 2026-08-20 session
 placed `dpdfnet` third despite it being the only net-harmful model — which is
 the kind of error a blind test exists to catch.
 
-**5. B4 — constrain the mask in time.** The next quality lever, and the
-first one aimed squarely at the standing complaint ("it still misses some
-audio"). `vocal-loss` fires 36/104 and `pumping` 38/104 and they are the same
-defect from two sides: a gain that collapses faster than a syllable. The
-machinery already exists — `audio/stereo.py` derives the chain's implied
-spectral mask, which is exactly the quantity to constrain, and doing it
-there works on all four models without touching a processor. Three
-parameters (`release_ms`, `attack_ms`, `floor_db`), swept over the corpus and
-judged on the *tags* rather than dSI-SDR, which scores this backwards. Full
-design in ROADMAP B4. No longer blocked on Q1.
+**5. B4 — constrain the mask in time. In progress, blocked on a real bug —
+read "The permissiveness knob" below before touching this.** `shape_mask()`
+exists in `tests/bench_quality.py` (uncommitted) with the exponent and
+`floor_db` built, verified and swept on two corpora — `dpdfnet_hr` is
+conclusively ruled out for this mechanism (worse noise at every setting, on
+both genres, even where its baseline is strong), `gtcrn`/`dtln` show a real
+sweet spot whose *cost* depends on how much music is in the source, not
+just which model is loaded. `attack_ms`/`release_ms` — the half that
+actually targets "collapses faster than a syllable" — hit three bugs in a
+row during verification, the last one unresolved (a stale smoothed value
+persisting across frames, producing an amplification burst nowhere near the
+frame that caused it) and is marked unsafe in the code.
+**Superseded as the immediate next step, 2026-10-18.** The unresolved bug
+now has a fix (smooth the two powers, not the ratio — ROADMAP B4's
+2026-10-18 note), and what goes ahead of it is the two engine bugs in
+`docs/RESEARCH_PRIOR_ART.md` §2.2/§2.3, which gate any separator work. The
+`floor_db` listening set was rendered in full and remains a valid test of
+*pumping*; it is not a test of SFX recovery. Read the scope correction at
+the head of "The permissiveness knob" below before acting on anything in
+that section. Full design context in ROADMAP B4.
+**Built, 2026-10-22** — see "What landed 2026-10-22". Smoothing and the floor
+now run in the engine for every model, and both are on the panel. The old
+probe's alignment was inverted, so the sweep numbers in "The permissiveness
+knob" are void until re-measured.
 
 **6. B9 — give the top octave back.** The measured damage is concentrated
 there: whole-corpus per-band vocal loss runs −4.8 / −4.3 / −7.0 / −8.6 /
@@ -248,6 +299,246 @@ Two decisions still open, both cheap: whether `paths.py` should use
 path makes bundling unnecessary.
 
 Start at D3.1. Nothing here needs a Windows machine until D3.3.
+
+## The permissiveness knob (B4) — investigated 2026-08-21 to 2026-09-08, NOTHING COMMITTED
+
+> **Retraction, 2026-10-22 — every number in this section was measured
+> misaligned.** `shape_mask()` estimated the lag correctly but applied it the
+> wrong way round. `lag > 0` means wet *trails* dry (`align()`'s
+> convention); the code then took `dry[lag:]`, which advances dry. So each
+> frame's `|Wet|/|Dry|` was taken against dry from 2 × lag away: about
+> 100 ms on `dpdfnet_hr` (50 ms lag), 32 ms on `gtcrn` and 16 ms on `dtln`,
+> all against a 512-sample (10.7 ms) analysis window. That covers the
+> exponent tables, "`dpdfnet_hr` is conclusively ruled out", and the 3.48×
+> blowup attributed to smoothing; all of them need re-measuring. It does not
+> cover the identity checks, which returned wet untouched, or the scope
+> correction below, which is an argument rather than a measurement.
+> Verified on synthetic wet lagged 0/480/2400/−300 samples: with the fix, a
+> floor that should change nothing gives 6e-8 error; the old alignment gave
+> 0.22 at 480 samples. The code that replaced this probe is
+> `audio/maskshape.py`, described in "What landed 2026-10-22".
+
+> **Scope correction, 2026-10-18 — this section conflated two goals, and the
+> conflation is this document's, not ROADMAP's.** The stated aim was to loosen
+> the music/vocal boundary so sound effects return. ROADMAP B4 is scoped as a
+> *quality* lever (pumping, `vocal-loss`, a gain collapsing faster than a
+> syllable) and never claimed SFX; the SFX goal was attached to it here.
+>
+> It was never reachable this way. The model emits one scalar per bin — how
+> speech-like — and the exponent and `floor_db` are monotonic functions of it,
+> so they preserve the model's own ranking of bins. Admitting an SFX bin
+> admits every bin ranked more speech-like, and drums rank beside SFX because
+> they share the features the model keys on: broadband, transient,
+> inharmonic. The discriminating information is gone before the knob runs.
+> ROADMAP §11 already recorded the measured consequence — pure-DSP SFX
+> add-back plateaus at ~8 % music leakage, "a semantic classifier is the only
+> thing that works" — and this investigation rediscovered that plateau without
+> recognising it. **Read §11 before re-opening any of this.**
+>
+> What survives, and is worth shipping: `floor_db` as the C12 suppression-floor
+> control on every model, and the timing half once the powers fix lands, both
+> as *quality* controls. What does not: the exponent on `gtcrn`/`dtln` (effect
+> flips with how much music the source has, and by ear it could not fix the
+> baseline), and any reading of this section as addressing SFX. Keeping SFX is
+> ROADMAP A4's problem — see its 2026-10-18 note, and the offline app's
+> measured handover in `docs/LIVE_SFX_HANDOVER.md` (2026-10-23).
+
+Everything in this section lives only in an uncommitted working-tree change
+to `tests/bench_quality.py`. No app code touched. Read this before touching
+B4, B9 or C12 — it changes what "build B4" actually means.
+
+**Where this came from.** After the switch-path fixes, the user asked for a
+"permissiveness bar" — not the mix slider (that blends dry back in
+broadband, uniformly), something that edits *the filter's own decision*: let
+more vocal through even if some music leaks, without the result getting
+noisier. That request is ROADMAP B4, already specced (`release_ms`,
+`attack_ms`, `floor_db`, all in the mask domain `audio/stereo.py` already
+derives). This section is the record of actually building and testing it.
+
+### The mechanism: a correction, not a reconstruction
+
+`shape_mask()` recovers the chain's own per-bin decision as `|Wet|/|Dry|`,
+reshapes it, and reapplies it to `wet` as a multiplicative correction plus a
+dry-sourced residual for bins the model killed outright — it does **not**
+resynthesise output from the mask. The first version did exactly that
+(`istft(shaped_mask * Dry)`) and was wrong: measured on dtln at **identity**
+settings (before the knob did anything), dSI-SDR went from +1.07 to −3.26
+and SAR from 2.75 to −1.75. None of the four shipped models is the pure
+magnitude mask that formulation assumes — dtln's second stage refines in the
+time domain, dpdfnet_hr modifies phase — so rebuilding from `|Wet|/|Dry|`
+throws that away. The correction form is exact at identity by construction
+(verified: 0.0 max error, even against a synthetic wet signal deliberately
+constructed so the mask formulation cannot describe it).
+
+**One real bug already fixed in the exponent itself.** `mask ** γ` for
+`γ < 1` pulls every bin toward 1 *from both directions* — it also pulled
+down bins the chain had *boosted* (mask > 1: band-limit filter, resample
+ringing), which is backwards for a control whose whole job is to remove
+less. Measured cost on dtln/`male_lead`: 1.3 dB of vocal retention given up
+for nothing. Fixed to act only where `mask < 1`.
+
+### `male_lead` sweep (8 clips, dense mix) — the exponent's best case
+
+| γ | dtln vocal_ret | dtln musNoise | gtcrn vocal_ret | gtcrn musNoise |
+|---|---|---|---|---|
+| 1.0 | −1.57 | 4.19 | −2.85 | −15.21 |
+| 0.7 | −1.33 | 3.92 | −2.37 | −13.67 |
+| 0.5 | −1.09 | 3.73 | −1.93 | −12.49 |
+| 0.3 | −0.71 | **1.48** | −1.34 | −10.07 |
+
+Every band improves monotonically on both models, and noise *falls* — a
+near-free win in this category. `dpdfnet_hr` does not share it: musNoise
+gets **worse at every γ tested** (6.81 → 8.30 → 14.56 → 13.46), no interior
+improvement on SAR/dSI-SDR anywhere. Left open at the time: is that because
+`male_lead` is `dpdfnet_hr`'s known-worst category, or the mechanism itself.
+
+### The second corpus: `nasheed`, 65 clips, built and merged
+
+Per the user's instruction to also test against the second corpus at
+`~/Music/MusicAssassin/Corpus-Nasheed` (72 raw YouTube-sourced tracks,
+vocal-forward devotional music, sparse backing — a genuinely different genre
+from the anime-OP corpus). Screened first with `scripts/corpus_excerpt.py`'s
+existing acapella guard before spending any demucs time: **65/72 passed, 7
+refused** as vocal-only or spoken-intro (two read −40.5 dB and −29.1 dB
+low-end, clearly not song mixes at all) — the exact mistake that guard was
+built to catch after a prior session fed 91 acapella files into this same
+pipeline. Built with `htdemucs`, ratios `1.0,2.0` (matching the existing
+corpus), merged into the same manifest as a new `nasheed` category rather
+than a separate corpus file. **Corpus is now 122 items across 8 categories,
+`nasheed` the largest at 65.** Zero demucs failures across all 195
+separation passes. The build itself took ~13 hours of real wall time (an
+sftp mount dropped and recovered mid-build; the harness checkpoints after
+every clip specifically so an interruption costs nothing — it did not this
+time either).
+
+### `nasheed` sweep — settles `dpdfnet_hr`, complicates `gtcrn`
+
+**`dpdfnet_hr` resolved, cleanly, the wrong way.** Its `nasheed` baseline is
+*strong* — 142%/51% of the offline ceiling on music/dSI-SDR, nothing like
+`male_lead`'s weak baseline — and musNoise **still** worsens monotonically
+at every γ (−5.58 → −0.80 → 3.08 → 6.31), with SAR/dSI-SDR flat-to-falling
+throughout. This is not a bad-category artifact. It is the mechanism itself
+failing on this architecture, independent of genre. **Conclusion: do not
+offer this mechanism on `dpdfnet_hr` at all.**
+
+**`gtcrn`'s vocal-retention story generalises; its noise story reverses.**
+Per-band damage and vocal_ret still improve monotonically to γ=0.3, more
+cleanly than on `male_lead` even (no reversal). But musNoise runs
+**backwards**: −10.14 (best, γ=1) → −7.31 → −6.05 → −3.49 (worst, γ=0.3).
+The failure tags explain it precisely — this is not the `male_lead` story of
+smoothing a harsh artifact into a quieter one; it is a clean `pumping`
+(67→4) for `leak-burst` (7→98/130) trade. Sparse backing has little
+over-suppression left to recover, so permissiveness mostly unmasks *real*
+residual music, which SIR (11.38→6.88) and `music_supp` (−25.60→−11.18)
+both confirm mechanically. **The calibration problem has two independent
+axes, not one**: which model (`dpdfnet_hr`: never), and how much music is
+actually in the source (a live app cannot know this in advance, so a single
+fixed γ is either too permissive on dense mixes or too leaky on sparse
+ones). `dtln` was not swept on `nasheed` — only `gtcrn` — so its match to
+this pattern is an extrapolation from `male_lead` similarity, not a
+measurement.
+
+### By ear: the numbers were an incomplete guide, twice over
+
+Two clips checked by ear — `CodeGeassOP1` (`male_lead`) and `A Child's
+Prayer` (`nasheed`), both ratios, `dtln`/`gtcrn` × γ={1, 0.7, 0.5}.
+
+**The shipped baseline itself sounds bad.** `dtln+mask1` and `gtcrn+mask1`
+— today's unmodified output, no knob touched — were both called "noisy" on
+`CodeGeassOP1`, with "a constant buzz... and some musical notes." Only
+`ceiling` (offline separator) and `oracle` (ground-truth cheat) sounded
+clean. **No setting of the exponent can fix this**, because it only
+reshapes a static per-frame decision the model already made — it cannot
+touch *how fast* that decision moves, which is the actual defect ROADMAP B4
+names: "a gain that collapses faster than a syllable."
+
+**The exponent's effect on vocals did not match the aggregate metric.** At
+`a200` specifically, `0.7`/`0.5` on both models were "lots of music slipping
+through... very noisy," with vocals *not* clearly better — sometimes "more
+muted" than at `mask1`. The aggregate numbers (averaged across `a100` and
+`a200` together) hid this: if `a200` is dramatically worse and `a100` only
+mildly worse, the average still reads as a real improvement. **Every sweep
+number reported above and in earlier sessions is a two-ratio average and
+none of it has been checked split by ratio.**
+
+**`A Child's Prayer` (nasheed) partly contradicted the `nasheed` numbers
+too.** `gtcrn`'s "noisy" complaint specifically *disappeared* at `0.7`/`0.5`
+— the opposite of what the aggregate musNoise trend for `nasheed` predicted.
+`dtln` stayed noisy and leaky throughout. Two clips, two different pictures,
+on top of the numeric average already being an unreliable guide — the
+by-ear check is not confirming the sweep here, it is finding real per-clip,
+per-model variance the sweep's averaging structurally cannot see.
+
+### The pivot: B4's *other* half — three bugs, none shipped
+
+The user's read of all this, verbatim: **"process these first, since noise
+needs to be removed and the filter that is supposed to be a permissivity
+filter does not feel like that too much."** That pointed at ROADMAP B4's
+`attack_ms`/`release_ms` — constraining *how fast* the mask may move, the
+part that actually addresses "collapses faster than a syllable," as opposed
+to the exponent/floor which only reshape a value that already moved too
+fast. Implemented as one-pole ballistics per bin, composed underneath the
+exponent/floor (smooth first, reshape what survives). **Three distinct bugs
+surfaced in verification, in order, none reaching real audio for the user:**
+
+1. **Identity-breaking gain collapse.** The smoothed value overwrote the raw
+   `mask` variable before the gain correction, so `gain = want/mask`
+   collapsed to ≈1 whenever exponent/floor were untouched — silently
+   cancelling the smoothing entirely. Caught by a synthetic step-response
+   test (a hard attenuation step, checking RMS just after the step): release
+   measurably did nothing when it should have visibly lagged. Fixed by
+   keeping the raw mask separate from the smoothed target throughout.
+
+2. **A denormal-float stall.** `release_ms` lets the smoothed state decay
+   geometrically toward near-zero forever, and float32 subnormal arithmetic
+   is 10–100x slower on most CPUs. One real clip that should have taken
+   seconds stalled past 90 s (the same clip processed in under 2 minutes,
+   as part of a bigger grid, before smoothing existed). Fixed with a 1e-4
+   floor on the smoothed state — inaudible, well below −80 dB.
+
+3. **A persistent-state amplification burst — UNRESOLVED, marked unsafe.**
+   `mask = |Wet|/|Dry|` is a division, and it is meaningless wherever `Dry`
+   has negligible energy in a bin. Confirmed on real audio: `gtcrn` on the
+   `male_lead` vocals-only probe, an otherwise *loud* frame (time-domain dry
+   peak −3.6 dB), one bin at 20906 Hz read −124 dB below that same frame's
+   own loudest bin while wet had residual energy there — mask clipped
+   straight to the 8x ceiling on that bin alone. A per-bin reliability gate
+   (bin energy vs. the frame's *own* peak bin, −60 dB threshold) fixed that
+   specific case. A whole-frame (broadband) version of the same idea was
+   tried *first* and does not work — a uniformly quiet frame has no internal
+   contrast to fail that test against, so it let the exact burst through
+   unchanged. But even after the per-bin fix, the **full real clip still
+   showed a 3.48x peak / 2.55x RMS blowup** at a different point — a stale
+   `smoothed` value from an earlier frame persisted through the release
+   window and produced a burst dozens of frames later, in a frame that by
+   itself showed zero anomalous bins. The bug is in how state *persists*
+   across frames, not in any single frame's reading, and needs a different
+   fix than frame-local gating. **Marked "NOT SAFE TO SWEEP YET" directly in
+   the code docstring.** Do not point `--sweep mask_release_ms` or
+   `mask_attack_ms` at real audio until this is root-caused.
+
+**`floor_db` alone has none of this risk.** It is stateless — no frame can
+affect another — already verified exact on synthetic cases (a fully-killed
+band correctly restored from dry: 0.248 measured vs 0.251 expected), and now
+confirmed stable on the *same* real clip that broke smoothing: peak/RMS
+essentially unchanged at `floor_db=12/24` vs identity (0.4542 → 0.4540 /
+0.4509 — no runaway, nothing like the smoothing blowup). A by-ear comparison
+(`gtcrn`+`dtln` × `floor_db`=0/24/12, same 4-clip subset used throughout —
+2 from `male_lead`, 2 from `nasheed`) has been rendered in full — 72 files,
+4 clips × 2 ratios × 9 variants, with all three `floor_db` settings confirmed
+distinct from each other on every clip/model/ratio pair, and no peak anomaly
+anywhere (max 0.587). It is **awaiting the listen, not yet reported back.**
+It is no longer the immediate next step — see the scope correction at the
+head of this section, and "What to do next" near the top of this doc.
+
+### State of the code
+
+`tests/bench_quality.py` is the only file touched, and it is **uncommitted**.
+It contains: `shape_mask()` with the one-sided exponent (verified),
+`floor_db` (verified, safe), `attack_ms`/`release_ms` (implemented, marked
+unsafe, do not sweep), and the `DEFAULT_CFG`/`config_id` plumbing for all
+four `mask_*` parameters. Nothing in `assassin_live/` changed. `dialog.md`
+is still untracked and still undecided.
 
 ## The by-ear results (2026-08-20) — read this before the 2026-08-19 set
 
@@ -731,6 +1022,58 @@ Use `~/Documents/venvs/assassin_venv_v0.4.4_cpu/bin/python` (1.13.4). Models
 come from `Music-Assassin/models/sherpa_onnx/sherpa-onnx-spleeter-2stems-int8/`
 (2 × 26 MB — note the `sherpa_onnx/` path component); `scripts/import_models.py`
 now copies them in under the names the registry looks up.
+
+## What landed 2026-10-22
+
+All uncommitted on `feat/separator-spike`. This is the three-step plan from
+`docs/RESEARCH_PRIOR_ART.md` §2.11.
+
+**Engine — chunked processors and lockstep (§2.2, §2.3).**
+- FIFO caps are sized from the installed processor
+  (`BASE_FIFO_BLOCKS` + 2× its declared hold).
+- A trim on either side drops the matching samples from the other:
+  `_dry_drop` (worker → callback) and `_wet_skip` (callback-only), netted
+  when both fire over one stall.
+- The worker's per-block job is split out as `_process_block()`, so
+  `tests/test_engine_chunked.py` can drive the real engine. Before the fix a
+  1 s chunked processor came out 16 % processed; it is now 100 %.
+
+**StemgenRT (A2).** `processors/stemgen.py`, `scripts/fetch_stemgen.py` and
+`models/stemgen_rt_vocals.json` — details in ROADMAP A2. The model lives in
+the data dir and is not bundled.
+
+**Mask shaper (B4, C12).**
+- `audio/maskshape.py` runs in the engine after the processor.
+  `set_atten_limit` drives the shaper's floor for every model except one
+  with a native setter (`speechdenoiser`). `set_smoothing` sets `release_ms`.
+- The panel's "Suppression limit" row is always visible now, with a new
+  "Smoothing" slider (0–150 ms, saved as `smoothing_ms`). Headless flags:
+  `--limit-db` and `--smoothing-ms`.
+- `tests/test_mask_shaper.py` and a toggle test in `test_engine_chunked.py`
+  cover it, and both are in `run_tests.sh`.
+- Both controls default to off; no default is chosen before a sweep and a
+  listen.
+
+**Bench.**
+- `shape_mask()` now delegates to `MaskShaper`. Its inverted alignment is
+  fixed; see the retraction at the head of "The permissiveness knob".
+- One deliberate behaviour change: while shaping is on, a bin the model
+  boosted above its dry is capped back to it.
+
+**Sweep logs must not go to the sftp mount.** Two sweeps died with exit 1
+and an empty log. The first stdout write after ~30 minutes of silence (the
+reference phase prints nothing) fails on the gvfs file, and the traceback
+can't be written either. Point `>` at local disk; reads from the mount are
+fine. Importing `bench_quality` over the mount alone takes ~2 minutes.
+
+**Also (2026-10-23):** `audio/stereo.py`'s `MAX_GAIN` went from 8 to 1.
+With anti-phase content plus a residual in wet, the 8× clamp amplified the
+pair by +17 dB. The new test reproduces that case and failed (6.89×) before
+the fix.
+
+**Not done.**
+- Defaults for floor and smoothing.
+- The latency ratchet ("The residual latency was a ratchet").
 
 ## What landed 2026-08-21
 

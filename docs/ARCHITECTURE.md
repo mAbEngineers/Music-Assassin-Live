@@ -192,6 +192,23 @@ still fits.
 | Android | "Volume booster" apps attach *built-in* effects (LoudnessEnhancer) to global audio session 0; **custom** effects on the output mix require vendor/ROM integration or root. No consumer path for system-wide filtering — in-app player only (build guide §10–11). | Not planned |
 | iOS | System audio capture impossible. | Not planned |
 
+**Correction, 2026-10-22: the Android row is wrong about root.** RootlessJamesDSP
+filters system-wide without root:
+- It captures other apps with `AudioPlaybackCaptureConfiguration` and replays
+  them through its own `AudioTrack`.
+- It silences the originals by attaching a −200 dB `DynamicsProcessing` to
+  each app's audio session.
+- Setup is a one-time ADB or Shizuku grant (`DUMP`, `PROJECT_MEDIA`).
+
+The limits are real:
+- Apps that opt out of capture (Spotify, Chrome) stay unprocessed.
+- AAudio apps can't be patched.
+- The added delay is invisible to the player's A/V clock, so only the
+  low-latency path keeps lip-sync.
+
+So it is feasible for capturable apps, and still not planned. Details and
+sources are in `docs/RESEARCH_PRIOR_ART.md` §1.3, "Android".
+
 ---
 
 ## 7. Honest Quality Caveat
@@ -202,6 +219,30 @@ True realtime *music-vs-SFX* separation still waits on HS-TasNet weights or an
 RT-STT release (tracked in research). This is fine for the product because of the
 layering: ship the voice-only experience now, drop in a music-only-removal
 processor the day one exists, zero app changes.
+
+**Correction, 2026-10-18 — the HS-TasNet precondition is met and the conclusion
+above still holds.** StemgenRT v0.7.0 ships MIT-licensed public weights, and its
+trainer `sweetspotsoundsystem/StemgenRT-5.8` is the former
+`sweetspotsoundsystem/HS-TasNet` renamed, so "waits on HS-TasNet weights" is
+satisfied as written. It does not deliver music-vs-SFX separation, because what
+is wrong is the taxonomy, not the latency: StemgenRT predicts **drums, bass and
+vocals**, with no `other` head and no concept of an effect. SFX and melodic
+instruments both fall into the unmodelled residual
+`R = mix - vocals - drums - bass`, so the only control it offers is
+`vocals + alpha*R` — one scalar trading effects against backing music, the same
+undifferentiated trade the B4 mask knob offers, just from a better baseline. And
+a MUSDB18-trained model has most likely filed an explosion under *drums*, the
+stem being discarded. Keeping SFX needs a three-way dialogue/music/effects model
+(the "cinematic" class); none is both causal and public as of this date. See
+`docs/RESEARCH_PRIOR_ART.md` §1.2 and ROADMAP §11's dead-ends entry.
+
+**Offline, this is solved — the caveat above is about the *realtime* path
+only (2026-10-23).** The sibling `Music-Assassin` repo keeps sound effects by
+running a second, non-causal model to extract an effects stem and adding it
+back to the de-musiced dialogue, and the result was preferred by ear over
+voice-only output. It does not transfer here as-is: both effects models (MRX,
+CDX23) need seconds of future audio. Four candidate live routes, the measured
+leakage figures and the mixing design are in `docs/LIVE_SFX_HANDOVER.md`.
 
 ---
 
