@@ -675,6 +675,38 @@ clamp the mask at 1.0 and derive it from smoothed powers (§1.6 item 1);
 consider the correction form `shape_mask()` already uses (multiplicative
 correction of wet) rather than resynthesis from dry.
 
+**Correction, 2026-10-23 — clamping at 1.0 does not work, measured both
+ways.** The clamp was tried (`MAX_GAIN = 1.0`, uncommitted) and the two
+requirements turn out to be mutually exclusive under this formulation:
+
+| `MAX_GAIN` | anti-phase amplification | image restoration |
+|---|---|---|
+| 8.0 | **fails** — out/in RMS 6.89, i.e. +16.8 dB | passes, −3.0 dB side retained |
+| 1.0 | passes | **fails** — −235.9 dB, i.e. total collapse |
+
+Deterministic, 3 runs of 3, and not the documented timing flake: −235.9 dB is
+bit-for-bit the value the *bypassed* mono path reports in the same run, so the
+rebuild is contributing nothing at all rather than contributing a narrowed
+image.
+
+**Why the cap cannot be the fix.** The mask formulation *requires* gain > 1 for
+anti-phase content. With `L = c + s`, `R = c − s` and a small centre, the mono
+downmix is ≈ `c` while L and R are at full level, so reconstructing them from a
+mono reference needs a mask far above 1. Capping at 1 caps the output at
+`|Dry_mono|` per bin — the centre alone — which is the collapse above. The cap
+treats the symptom; the cause is the **denominator**: `|Dry_mono|` is the wrong
+reference for content that does not survive the mono sum.
+
+**Fix direction instead:** floor the denominator against the channel levels
+rather than clamping the quotient — per bin, `max(|Dry_mono|, k·max(|L|, |R|))`
+— or derive the mask from mid+side energy rather than the mono sum alone. An
+anti-phase bin then yields a mask ≤ 1 *naturally*, because its reference is the
+channel level and not the cancelled sum, and legitimate restoration survives.
+A scalar clamp on the quotient can satisfy one requirement or the other; a sane
+denominator can satisfy both. Untested — this is a design change to B3's core
+formulation, on a path that ships off by default, so it wants a decision rather
+than a quiet edit.
+
 ### 2.9 Python in the real-time path
 
 The PortAudio callback is Python: it allocates on every block

@@ -53,7 +53,13 @@ Both write to `~/.local/state/music-assassin/bench/stemgen/`.
   - Defaults: both off.
   - Measured effect: they help `dpdfnet_hr` and hurt `stemgen`.
 - **Stereo rebuild:** `MAX_GAIN` went from 8 to 1. It was amplifying
-  anti-phase content by +17 dB.
+  anti-phase content by +17 dB. **Not committed, and not ready:** the clamp
+  fixes the amplification but collapses the stereo image completely —
+  `test_stereo_rebuild` fails deterministically (3/3) at −235.9 dB side
+  retained, the same value the bypassed mono path reports. The two
+  requirements are mutually exclusive under a quotient clamp; the denominator
+  is the real lever. Measurement and fix direction in
+  `RESEARCH_PRIOR_ART.md` §2.8.
 - **Bench:** `shape_mask()` had its alignment inverted, which voids every B4
   sweep number before 2026-10-22. Retraction in HANDOVER.
 - **Docs:**
@@ -62,19 +68,23 @@ Both write to `~/.local/state/music-assassin/bench/stemgen/`.
 
 ## Next, in order
 
-1. **Read the two sweep results** and decide the default model. If StemgenRT
+1. **Decide what to do about `MAX_GAIN`** (`RESEARCH_PRIOR_ART.md` §2.8). It
+   is the only uncommitted code left on the branch, and it currently trades a
+   real +17 dB amplification bug for a total loss of the stereo image. Neither
+   value is shippable; the denominator needs changing.
+2. **Read the two sweep results** and decide the default model. If StemgenRT
    holds up, the B4/B9/B10 polish on `dpdfnet_hr` drops in priority.
-2. **Listen.** The by-ear checks still open:
+3. **Listen.** The by-ear checks still open:
    - StemgenRT versus `dpdfnet_hr`;
    - floor and smoothing on `dpdfnet_hr`;
    - HANDOVER gates 3 and 4.
-3. **Check whether players compensate for reported latency** (mpv, Firefox,
+4. **Check whether players compensate for reported latency** (mpv, Firefox,
    Chromium) before building anything that needs it. This machine runs
    PipeWire 1.0.5, so declaring latency would need a native `pw_filter`.
    Loopback `ProcessLatency` needs 1.4 or later.
-4. **Sound effects:** `LIVE_SFX_HANDOVER.md` §4 ranks the routes. The
+5. **Sound effects:** `LIVE_SFX_HANDOVER.md` §4 ranks the routes. The
    cheapest is a music-presence gate.
-5. Tag 0.1.4 once B10 or a StemgenRT default removes the suppression
+6. Tag 0.1.4 once B10 or a StemgenRT default removes the suppression
    blocker.
 
 ## Decisions only the user can make
