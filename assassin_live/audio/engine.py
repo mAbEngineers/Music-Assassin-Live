@@ -47,12 +47,22 @@ from ..processors.base import StreamProcessor
 from .backends.base import RoutingBackend
 from .bandlimit import BandlimitFilter
 from .lag import LagEstimator
+from .maskshape import MaskShaper
 from .midside import MidSideFilter
 from .stereo import StereoRebuild
 
 SAMPLE_RATE = 48000
 BLOCK = 960          # 20 ms
 XFADE_BLOCKS = 1     # gain ramp spread over one block == 20 ms
+
+# Headroom every FIFO keeps beyond what the installed processor itself
+# buffers. 160 ms used to be the whole cap, which is right for a model that
+# answers every block and wrong for one that answers once per chunk: a 1 s
+# Spleeter chunk arrived as 1 s of audio, the worker kept the newest 160 ms
+# and threw the rest away, and the callback filled the gap with dry -- 16 %
+# of the output processed, the other 84 % the original music (measured
+# 2026-10-22, tests/test_engine_chunked.py).
+BASE_FIFO_BLOCKS = 8
 
 LIMITER_THRESHOLD = 0.8  # below this, output passes through untouched
 LIMITER_CEILING = 0.98   # peaks above threshold compress toward this, never past it
@@ -79,6 +89,7 @@ class EngineStats:
         self.blocks_in = 0
         self.fallback_blocks = 0   # wet wanted but not ready -> dry emitted
         self.overflows = 0
+        self.wet_trimmed = 0       # processed samples dropped at the wet FIFO cap
         self.worker_ms_avg = 0.0
         self.xruns = 0
         self.callback_errors = 0   # exception in _callback -> would silently kill the stream
@@ -155,6 +166,11 @@ class AudioEngine:
         self._bandlimit_r = BandlimitFilter(SAMPLE_RATE)
         self._bandlimit_enabled = True  # safety hygiene filter — on by default
         self._atten_limit_db = 0.0  # forwarded to the processor if it supports one
+        # The permissiveness controls (audio/maskshape.py): suppression floor
+        # and smoothing on the chain's own per-bin decision, for every model.
+        # Worker-thread-only state; its parameters are plain floats the UI
+        # thread may write at any time.
+        self._shaper = MaskShaper(SAMPLE_RATE)
 
         # A model swap asked for from another thread. The worker installs
         # it (see set_processor/_swap_runtime) so that nothing the worker
@@ -168,14 +184,46 @@ class AudioEngine:
         # the model changes cannot apply its answer to the new one.
         self._lag_gen = 0
 
+        # The two FIFOs are paired by position, so whenever one side has to
+        # drop samples the other must drop the same ones or every later
+        # pairing is skewed by the difference (an echo below 100 % mix).
+        # Wet dropped by the worker at its cap -> the callback drops that
+        # much from the head of _dry_out (handed over under self._lock).
+        # Dry dropped by the callback at its cap -> the matching wet has not
+        # been produced yet, so the callback skips that much of it later.
+        self._dry_drop = 0       # written by worker, consumed by callback
+        self._wet_skip = 0       # callback-thread-only
+
         # (processor, downsampler, upsampler) swapped as one unit so the
         # worker thread never reads a processor paired with the wrong
         # resamplers mid-switch
         self._runtime = self._build_runtime(processor)
 
         # bound how much processed audio may pile up before we drop old
-        # samples (keeps wet path from drifting seconds behind live audio)
-        self._max_out = BLOCK * 8
+        # samples (keeps wet path from drifting seconds behind live audio).
+        # Sized from the installed processor -- see _apply_caps().
+        self._max_out = BLOCK * BASE_FIFO_BLOCKS
+        self._apply_caps()
+
+    def _apply_caps(self) -> None:
+        """Size the FIFO caps and the input queue for the installed processor.
+
+        A processor's declared `latency_samples` is how much input it may
+        hold before answering, and a chunked one answers with all of it at
+        once. Every buffer downstream has to be able to hold that much plus
+        the old 160 ms of headroom, twice over for the chunk that is being
+        emitted while the next one fills. The input queue grows the same
+        way, because the worker is blocked for the whole of a chunk's
+        inference and blocks keep arriving meanwhile.
+
+        For the block-synchronous models this changes almost nothing (a few
+        hundred samples on dpdfnet_hr); it is the chunked ones it exists for.
+        """
+        proc = self.proc
+        held = int(np.ceil(proc.latency_samples * SAMPLE_RATE / proc.sample_rate))
+        self._max_out = BLOCK * BASE_FIFO_BLOCKS + 2 * held
+        with self._in_q.mutex:
+            self._in_q.maxsize = BASE_FIFO_BLOCKS + int(np.ceil(held / BLOCK))
 
     def _warm_up(self, seconds: float = 0.5) -> None:
         """Run silence through the processor so the first real block meets a
@@ -237,13 +285,18 @@ class AudioEngine:
         """
         if not self._running:
             self._runtime = self._build_runtime(processor)
+            self._apply_caps()
             self._apply_atten_limit()
             return
         self._pending_runtime = processor
 
     def set_atten_limit(self, db: float) -> None:
-        """Suppression-strength ceiling, for processors that expose one
-        (currently only speechdenoiser); a no-op on ones that don't."""
+        """How far any bin may be pulled down, in dB; 0 = no limit.
+
+        A processor with its own limit (speechdenoiser's atten_lim_db) gets
+        it natively; every other model gets the same control through the
+        mask shaper's floor (ROADMAP C12) — never both, which would apply
+        the limit twice."""
         self._atten_limit_db = db
         self._apply_atten_limit()
 
@@ -251,6 +304,19 @@ class AudioEngine:
         setter = getattr(self.proc, "set_atten_limit", None)
         if setter:
             setter(self._atten_limit_db)
+            self._shaper.set_params(floor_db=0.0)
+        else:
+            self._shaper.set_params(floor_db=self._atten_limit_db)
+
+    def set_smoothing(self, release_ms: float) -> None:
+        """How fast a bin's gain may fall, in ms; 0 = as fast as the model
+        moves it (today's behaviour). Trades "a syllable survives" against
+        "music lingers a moment" — see audio/maskshape.py."""
+        self._shaper.set_params(release_ms=release_ms)
+
+    @property
+    def shaping_active(self) -> bool:
+        return not self._shaper.identity
 
     @property
     def latency_ms(self) -> float:
@@ -282,9 +348,10 @@ class AudioEngine:
         drains a whole block each time. So a pipeline can drift steadily
         later while the reported latency does not move at all.
 
-        Pinned at `_max_out` (160 ms) means it is saturated and
-        `_work()` is discarding the oldest audio to stay under the cap —
-        which is both the worst case for delay and audible as a skip.
+        Pinned at `_max_out` (160 ms plus twice what the processor holds,
+        see _apply_caps) means it is saturated and `_work()` is discarding
+        the oldest audio to stay under the cap — which is both the worst case
+        for delay and audible as a skip.
         """
         return 1000.0 * len(self._out) / SAMPLE_RATE
 
@@ -438,6 +505,7 @@ class AudioEngine:
         self._bandlimit.reset()
         self._bandlimit_r.reset()
         self._stereo.reset()
+        self._shaper.reset()
         self._dry_work = np.zeros((0, 2), dtype=np.float32)
         self._lag_est = LagEstimator(SAMPLE_RATE)
         self._mask_lag = None
@@ -489,7 +557,9 @@ class AudioEngine:
             self._in_q.queue.clear()
         with self._lock:
             self._out = np.zeros((0, 2), dtype=np.float32)
+            self._dry_drop = 0
         self._dry_out = np.zeros((0, 2), dtype=np.float32)
+        self._wet_skip = 0
         self._dry_work = np.zeros((0, 2), dtype=np.float32)
         self._lag_ema = 0.0
         self._mask_lag = None
@@ -564,6 +634,7 @@ class AudioEngine:
             self._fifo_reset_pending = False
             self._dry_out = np.zeros((0, 2), dtype=np.float32)
             self._mix_pad = 0
+            self._wet_skip = 0
             self._lag_ema = 0.0
         pad = self._mix_pad_pending
         if pad is not None:
@@ -579,16 +650,38 @@ class AudioEngine:
             # exactly what would throw the correction away again.
             cap = self._max_out + self._mix_pad
             if len(self._dry_out) > cap:
-                self._dry_out = self._dry_out[-cap:]
+                cut = len(self._dry_out) - cap
+                self._dry_out = self._dry_out[cut:]
+                # The wet those dry samples were waiting for is still to
+                # come; skip it on arrival so the pairing stays positional.
+                self._wet_skip += cut
         except queue.Full:
             self.stats.overflows += 1
             # dropped this block from processing — skip it here too, so the
             # dry FIFO never gets ahead of what wet will actually produce
 
         with self._lock:
+            drop, self._dry_drop = self._dry_drop, 0
+            # Both caps can fire over one stall, and then they name the SAME
+            # samples: the oldest wet the worker trimmed is exactly the wet
+            # this side was waiting to skip because its dry is already gone.
+            # Net them, or each side drops that stretch twice.
+            both = min(drop, self._wet_skip)
+            drop -= both
+            self._wet_skip -= both
+            if self._wet_skip and len(self._out):
+                skip = min(self._wet_skip, len(self._out))
+                self._out = self._out[skip:]
+                self._wet_skip -= skip
             take = min(frames, len(self._out))
             wet_st = self._out[:take]
             self._out = self._out[take:]
+        if drop:
+            # The worker discarded that much of the oldest wet; the dry it
+            # was paired with sits at the head of this FIFO. Dropping it here
+            # keeps every later pairing the same instant — without this a
+            # single saturation left dry and wet apart for the session.
+            self._dry_out = self._dry_out[drop:]
 
         # dry pulled from the same lockstep FIFO as wet (both fed once per
         # callback, both drained by the same amount here) so they always
@@ -661,6 +754,7 @@ class AudioEngine:
             than spliced onto the front of the new model's first output.
         """
         self._runtime = self._build_runtime(processor)
+        self._apply_caps()
         self._apply_atten_limit()
         self._warm_up()
         # worker-owned DSP state, all of it specific to the model that just
@@ -669,6 +763,7 @@ class AudioEngine:
         self._bandlimit.reset()
         self._bandlimit_r.reset()
         self._stereo.reset()
+        self._shaper.reset()
         self._dry_work = np.zeros((0, 2), dtype=np.float32)
         self._lag_gen += 1          # invalidates any measurement in flight
         self._lag_est = LagEstimator(SAMPLE_RATE)
@@ -681,6 +776,7 @@ class AudioEngine:
             self._in_q.queue.clear()
         with self._lock:
             self._out = np.zeros((0, 2), dtype=np.float32)
+            self._dry_drop = 0
         # _dry_out and _mix_pad are the callback's; it clears them on its
         # next block. That is also what drops the old model's alignment
         # padding, rather than leaving it to delay the new model's dry side
@@ -697,19 +793,32 @@ class AudioEngine:
                 block = self._in_q.get(timeout=0.2)
             except queue.Empty:
                 continue
-            proc, down, up = self._runtime
-            t0 = time.perf_counter()
-            y = (self._wet_stereo_proc(proc, down, up, block)
-                 if proc.wants_stereo
-                 else self._wet_mono_proc(proc, down, up, block))
-            ms = (time.perf_counter() - t0) * 1000.0
-            self.stats.worker_ms_avg = 0.9 * self.stats.worker_ms_avg + 0.1 * ms
-            if len(y) == 0:
-                continue
-            with self._lock:
-                self._out = np.concatenate([self._out, y.astype(np.float32)])
-                if len(self._out) > self._max_out:
-                    self._out = self._out[-self._max_out:]
+            self._process_block(block)
+
+    def _process_block(self, block: np.ndarray) -> None:
+        """One captured block through the wet path and into `_out`.
+
+        The whole of the worker's per-block job, split out of the loop so a
+        test can drive the real engine one block at a time
+        (tests/test_engine_chunked.py) instead of re-implementing it.
+        """
+        proc, down, up = self._runtime
+        t0 = time.perf_counter()
+        y = (self._wet_stereo_proc(proc, down, up, block)
+             if proc.wants_stereo
+             else self._wet_mono_proc(proc, down, up, block))
+        ms = (time.perf_counter() - t0) * 1000.0
+        self.stats.worker_ms_avg = 0.9 * self.stats.worker_ms_avg + 0.1 * ms
+        if len(y) == 0:
+            return
+        with self._lock:
+            self._out = np.concatenate([self._out, y.astype(np.float32)])
+            if len(self._out) > self._max_out:
+                cut = len(self._out) - self._max_out
+                self._out = self._out[cut:]
+                # Tell the callback to drop the dry these were paired with.
+                self._dry_drop += cut
+                self.stats.wet_trimmed += cut
 
     def _wet_mono_proc(self, proc, down, up, block) -> np.ndarray:
         """The shipped path: stereo in, mono model, stereo back out.
@@ -754,9 +863,24 @@ class AudioEngine:
             # running misaligned — a wrong image is worse than none.
             return np.repeat(y[:, None], 2, axis=1)
 
+        if not self._shaper.identity or self._shaper.pending:
+            dry_st, y = self._shape(dry_st, y[:n])
+            if len(y) == 0:
+                return _EMPTY_STEREO
         if not self._stereo_enabled:
             return np.repeat(y[:, None], 2, axis=1)
-        return self._stereo.process(dry_st, y[:n])
+        return self._stereo.process(dry_st, y)
+
+    def _shape(self, dry_st: np.ndarray, wet: np.ndarray) -> tuple:
+        """The mask shaper, or — on the block after its controls return to
+        their no-op values — what it was still holding, unshaped. Handing
+        that back rather than dropping it keeps output count-aligned, which
+        is what the positional dry/wet pairing depends on."""
+        if not self._shaper.identity:
+            return self._shaper.process(dry_st, wet)
+        held_st, held_w = self._shaper.drain()
+        return (np.concatenate([held_st, dry_st]),
+                np.concatenate([held_w, wet]))
 
     def _collect_lag(self, dry_st: np.ndarray, wet: np.ndarray) -> None:
         """Gather windows for the lag measurement and apply the answer.
@@ -823,6 +947,14 @@ class AudioEngine:
         filter's whole job is producing a mono, center-emphasised signal for
         a mono model, which is precisely what this path does not want.
         """
+        # Dry paired by position, as on the mono path, for the mask shaper.
+        # No lag measurement is needed here: a wants_stereo processor emits
+        # count-aligned output (processors/base.py), so the FIFO alone lines
+        # the two up. Fed and drained whether or not shaping is on, so
+        # switching it on mid-stream finds the FIFO already in step.
+        self._dry_work = np.concatenate([self._dry_work, block])
+        if len(self._dry_work) > self._max_out:
+            self._dry_work = self._dry_work[-self._max_out:]
         x = down.resample_chunk(block) if down is not None else block
         y = proc.feed(x)
         if up is not None and len(y):
@@ -830,4 +962,10 @@ class AudioEngine:
         if len(y) and self._bandlimit_enabled:
             y = np.stack([self._bandlimit.process(y[:, 0]),
                           self._bandlimit_r.process(y[:, 1])], axis=1)
+        if len(y) == 0:
+            return y
+        n = min(len(y), len(self._dry_work))
+        dry_st, self._dry_work = self._dry_work[:n], self._dry_work[n:]
+        if not self._shaper.identity or self._shaper.pending:
+            _, y = self._shape(dry_st, y[:n])
         return y
