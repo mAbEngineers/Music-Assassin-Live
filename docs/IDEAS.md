@@ -21,7 +21,9 @@ here:
 
 This page is the index across all of them, plus the ideas that never made it
 into any of them. **Add to it freely** — an idea costs two lines here and the
-cost of losing one is a repeated investigation. Started 2026-10-24.
+cost of losing one is a repeated investigation. Started 2026-10-24, and it
+absorbs the symptom-organised list that was drafted in parallel as
+`RESEARCH_IDEAS.md`; if both still exist, this is the one to keep.
 
 ---
 
@@ -104,6 +106,10 @@ cancels in the mono sum. Fix the reference, not the quotient (§5).
 | A slow separator as an online teacher | **idea** | Highest effort of the §1.6 levers. `RESEARCH_PRIOR_ART.md` §1.6 #7 |
 | Distil a causal student from CDX23 | **idea** | `LIVE_SFX_HANDOVER.md` §4.4 |
 | Retrain on permissive data | **idea** | Would also resolve the Q6 licence blocker, which no measurement can settle |
+| Retrain `gtcrn`/`dpdfnet` with clean = dialogue + effects, noise = music | **idea** | Needs no app changes at all — same interface, different weights. The cheapest route to an effects-keeping model |
+| Fine-tune `stemgen` on anime-opening vocals | **idea** | If its licence and data allow (Q6) |
+| Small causal cleanup model on top of `stemgen` | **idea** | Predicts a correction mask rather than redoing separation |
+| OpenVINO with BF16 | **idea** | 2–3× on one large model in the offline app. The live notes only tested OpenVINO *through sherpa*, which statically links its own runtime. Relevant only if a large model goes live |
 | Streaming an unmodified offline model | **dead** | A ceiling, not a product. `RESEARCH_PRIOR_ART.md` §1.2 |
 | Any additional speech enhancer | **dead** | Category exhausted; all dominated by `dpdfnet_hr`. ROADMAP §11 |
 
@@ -155,6 +161,36 @@ which is where music leaks. Sparse material must be measured, not inferred —
 and every B4 sweep figure before 2026-10-22 is void, because the probe's
 alignment was inverted.
 
+## 4a. Combining models rather than choosing one
+
+The two shipped options fail in opposite directions: `dpdfnet_hr` removes
+music well and chews some voices; `stemgen` leaves voices intact and leaks
+audible music. Both sit on the Pareto frontier, which is exactly the condition
+under which combining them can beat either.
+
+| idea | status | notes |
+|---|---|---|
+| Parallel blend as the permissiveness slider | **idea — the strongest unexplored lever** | Run both, mix by a ratio. **Blend per-bin gains, not waveforms**: `dpdfnet_hr` alters phase, so summing outputs risks comb filtering. Align them first (the lag estimator exists). ~4 ms of the 20 ms budget, latency of the slower. Check offline before building |
+| One model's decision driving the other | **idea** | `dpdfnet_hr` as the voice-activity detector, `stemgen` as the voice content |
+| Cascade: `stemgen`, then `dpdfnet_hr` on its output | **idea** | The enhancer then sees a mostly-voice signal, so its "music looks like voice" confusion matters less. +50 ms latency, ~2 ms/block. May still chew modulated voices |
+| Four-stem Wiener mask | **idea** | Run `stemgen`'s drums, bass and vocals heads and use `vocals² / Σ stems²` as the gain. Standard consistency trick, ~3× compute. A Wiener re-filter did nothing for MRX effects, so expect little |
+| Per-bin cleanup from the music estimate | **idea** | `input − stemgen` approximates the music; subtract with over-subtraction and a floor. Risk: spectral subtraction *creates* the metallic noise it is meant to remove |
+| Voice-activity expander on `stemgen`'s output | **idea** | Attenuate frames whose voice level falls far below its running level — aimed at the gap leak. Cheap, but trims breaths and quiet tails |
+
+## 4b. Musical noise — the "metallic" artefact specifically
+
+Isolated time-frequency bins that survive masking. Worth separating from the
+music-leak problem, because it can be removed *without* removing the music
+behind it.
+
+| idea | status | notes |
+|---|---|---|
+| 2-D median or morphological opening on the gain mask | **idea** | Deletes isolated bins, keeps connected regions. Cheap and directly aimed at the mechanism |
+| Temporal mask smoothing | **measured** | On `male_lead` it took `stemgen`'s musical noise from −6.5 to −10.4 (kurtosis, lower better) for 1 dB of dSI-SDR and 4 dB less music removed. On `nasheed` it barely moved — another instance of 1.3's lesson about category averages |
+| Decision-directed smoothing (Ephraim–Malah) | **idea** | Classic noise-suppressor machinery, designed for exactly this |
+| Mel-band gain smoothing as a post-filter | **idea** | Cheaper than a vocoder (§6a) and also cuts isolated bins |
+| Track it with `musical_noise` kurtosis and `clicks` | **shipped** | So a fix can be judged before listening |
+
 ## 5. Stereo image
 
 | idea | status | notes |
@@ -179,6 +215,16 @@ which other ideas are possible.
 | Native `pw_filter` / LADSPA node | **idea** | ARCHITECTURE Phase 3. Would also fix A/V sync properly |
 | Preallocated ring buffers instead of concatenate/slice FIFOs | **idea** | Reduces allocation churn in the realtime path. §2.9 |
 
+## 6a. Voice damage, and the mel domain
+
+| idea | status | notes |
+|---|---|---|
+| Modulated/sung voices are what `dpdfnet_hr` chews | **hypothesis, partly tested** | `vocal_ret_db` is measured on vocals *alone*, with no music, and reads −8.5 dB on `male_lead` against −0.9 on `sparse_acoustic` — so the damage is not caused by the mix. Whether *pitch modulation* drives it is untested: correlate per-clip damage against pitch range and speed |
+| Demodulate, then de-music, then unwarp | **idea, high risk** | Warp time so pitch is near-constant, enhance, unwarp. Needs a causal pitch tracker with look-ahead, and the music warps too, smearing its pitches. Test the hypothesis above first |
+| Female voices specifically | **measured** | The original corpus was 100 % female (median F0 331 Hz), above most enhancer training data — but `male_lead` showed the problem too, so it is not purely a female-voice effect |
+| CleanMel / Mel-FullSubNet | **idea** | Enhance the mel spectrogram, resynthesise with a neural vocoder. Mel-FullSubNet has an online variant (15 past frames, no look-ahead). Open questions: both are speech enhancers, so they may treat music as speech too; a vocoder cannot restore what the mel discarded, including phase; licences and live CPU unchecked |
+| Input-level normalisation | **idea** | `dpdfnet_hr` changes behaviour with level, and quiet input comes out silent — this gates the 0.1.4 tag. ROADMAP B10 |
+
 ## 7. Measurement and evaluation
 
 | idea | status | notes |
@@ -188,6 +234,10 @@ which other ideas are possible.
 | Plumbing test that drives the real engine | **committed** | `tests/test_engine_chunked.py`. Its absence is why a 16 %-processed defect survived a whole sweep — the bench reimplements the chain instead of driving the engine |
 | Per-category reporting rather than corpus averages | **shipped** | A config that wins on average can fail badly on one category |
 | Held-out clips never used while tuning | **shipped** | The harness itself becomes something to overfit to |
+| Per-clip tables rather than averages | **shipped** | `scripts/bench_subset.py` |
+| Stage videos: spectrograms, level curves, model-vs-oracle map | **shipped** | `scripts/visualize_stages.py`. Showed `stemgen`'s leak is worst in vocal gaps and the top octave, with horizontal lines marking tonal music |
+| Dump the chain's inner stages into the same video | **idea** | After downmix, after model, after band-limit, after shaper — so a defect can be localised to a stage instead of inferred |
+| Wide-stereo and out-of-phase corpus | **idea** | The stereo rebuild's failures all live in material the current corpus barely contains — see §5 |
 | Blind A/B re-ranking of models | **idea** | `scripts/ab_listen.sh`. The sighted ranking put `dpdfnet` third despite it being the only net-harmful model |
 | Synthetic tones as a music fixture | **dead** | Suppressed like noise (−47 dB) against real music's −0.4 to −1.7 dB. Guarded against in `test_live_e2e.py` |
 
@@ -221,11 +271,13 @@ be lost:
   parallel *short-window* path that bypasses the model is possible, but that
   is pure-DSP add-back again, i.e. the ~8 % plateau. The intuition is sound;
   the lever does not exist at this layer.
-- **"Make the de-musicing less strict."** The strictness is the training
-  objective, not a parameter, so it cannot be loosened from outside. The
-  correct form of this idea is to change *what gets classified* — predict
-  music and subtract it (A4), so effects survive because nothing ever labelled
-  them.
+- **"Make the de-musicing less strict."** A single model's strictness is its
+  training objective, not a parameter, so it cannot be loosened from outside.
+  But the idea has two real realisations, and an earlier version of this page
+  wrongly called it dead: **blend two models in parallel** (§4a) to trace
+  points between a permissive one and a strict one, and **change what gets
+  classified** — predict music and subtract it (A4), so effects survive
+  because nothing ever labelled them.
 
 ## 10. Where to add the next idea
 
