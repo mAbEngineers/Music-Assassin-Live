@@ -737,6 +737,26 @@ where wet *exceeds* the mono dry in a bin. That is the residual-over-
 cancellation case the clamp exists to stop, and the band-limit's sub-dB
 ripple. The latter is the measured 0.2 dB cost.
 
+**Confirmed a third way, 2026-10-24, and this one is deterministic.** The A/B
+above needs an idle machine and a local copy because it drives `AudioEngine`,
+whose lag measurement is what actually flakes. Driving the rebuild directly
+through `test_stereo_rebuild.stream()` — `wide_stereo` dry, `_Gate`'s output
+on the mono downmix as wet, no engine, no lag, no timing — removes that
+dependency entirely:
+
+| `MAX_GAIN` | 1.0 | 2.0 | 4.0 | 8.0 |
+|---|---|---|---|---|
+| side retained | −3.02 dB | −3.01 dB | −3.01 dB | −3.01 dB |
+
+Identical to 0.01 dB, and it ran from the sftp mount under load average 28.
+**The clamp is inert for image restoration**: on content the model passes
+through, the mask is ≈ 1 and the cap never binds, so there is nothing for it
+to take away. That is the algebra above, measured. The 0.2 dB in the A/B is
+the band-limit ripple case specifically, not a cost to the image as such.
+Anyone re-checking this should use the direct path rather than the engine —
+it is a dozen lines and it cannot produce the −235.9 dB artefact at all,
+because there is no lag measurement to be unfinished.
+
 **The denominator idea is still worth having, for a different reason.**
 Under the cap, a bin that cancels in mono passes the pair at unity. So
 side-only music in those bins is kept, never suppressed. Referencing the
