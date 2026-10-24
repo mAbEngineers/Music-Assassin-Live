@@ -61,7 +61,8 @@ got here: `docs/PIPELINE_HISTORY.md`.
 - **StemgenRT processor:**
   - `processors/stemgen.py`
   - `scripts/fetch_stemgen.py`, which installs it to the data dir; the model
-    is not bundled because its training data is non-commercial.
+    is bundled in the .deb (decision 2026-10-24) although its training data is
+    non-commercial; see packaging/model-licenses/MIT-stemgen-rt.txt.
 - **Suppression limit and smoothing for every model:**
   - Code: `audio/maskshape.py`, with power smoothing and a gain capped at 1.
   - UI: both are sliders on the panel; the CLI has `--limit-db` and
@@ -86,8 +87,8 @@ got here: `docs/PIPELINE_HISTORY.md`.
 ## Next, in order
 
 1. **Stemgen ships as is** (user decision 2026-10-24): selectable in the picker,
-   `dpdfnet_hr` stays default, not bundled in the .deb (non-commercial training
-   data; bundling is one line in `scripts/build_deb.sh`). Cutting its music leak
+   `dpdfnet_hr` stays default, bundled in the .deb (decided 2026-10-24; training data is
+   non-commercial, flagged in its licence file). Cutting its music leak
    is next version's work (RESEARCH_IDEAS §1).
    Done: the `MAX_GAIN = 1` fix (`b2687aa`). The re-measurement shows it costs
    0.2 dB of image and removes a +17 dB burst. A level-referenced

@@ -452,8 +452,8 @@ dialogue untested, non-commercial training data) and integration notes in
 SHA-256, cuts out the vocals subgraph, and checks it is bit-identical to the
 full graph over 300 hops before installing anything. The processor is
 `wants_stereo` at 44.1 kHz and count-aligned (it discards the pre-roll hop);
-its measured lag is 0. Cost: 1.88 ms per 20 ms block. It is not bundled in
-the .deb until the training-data question is settled.
+its measured lag is 0. Cost: 1.88 ms per 20 ms block. It is bundled in
+the .deb (decided 2026-10-24, despite the non-commercial training data).
 
 **`male_lead` result, 2026-10-23 (16 pairs).** The CSV is
 `bench/stemgen/shaper_male_lead.csv`.
@@ -2201,7 +2201,7 @@ machine, and on one nasheed clip **9.49 dB vocals SDR against 2.10 dB for the
 untouched mix**. That is the ~1 dB separation floor moving — on one clip. The
 card also records two things that are *not* done: **spoken dialogue is
 untested**, and the training data (MUSDB18-HQ, MoisesDB CC BY-NC-SA) is
-non-commercial, so it is **not bundled into the `.deb`** until that is decided.
+non-commercial, so it was held back from the `.deb` until 2026-10-24, when the maintainer decided to **bundle it**.
 
 **0. Land it.** Now the largest item here: nine modified files and nine
 untracked ones, including three new modules and two new test files, all of it

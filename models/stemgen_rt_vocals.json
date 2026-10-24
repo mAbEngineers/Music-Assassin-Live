@@ -8,7 +8,7 @@
   "channels": 2,
   "hop": 128,
   "output_alignment": "previous input hop; first return is an invalid pre-roll hop (discarded by processors/stemgen.py)",
-  "license": "MIT (sweetspotsoundsystem/stemgen-rt — verified 2026-10-18; the ONNX file is a release asset of the MIT repo, no separate weights license). CAVEAT: trained on MUSDB18-HQ ('educational, non-commercial') and MoisesDB (CC BY-NC-SA 4.0). Not bundled into the .deb until that is decided.",
+  "license": "MIT (sweetspotsoundsystem/stemgen-rt — verified 2026-10-18; the ONNX file is a release asset of the MIT repo, no separate weights license). CAVEAT: trained on MUSDB18-HQ ('educational, non-commercial') and MoisesDB (CC BY-NC-SA 4.0). Bundled into the .deb by the maintainer's decision (2026-10-24).",
   "source": "https://github.com/sweetspotsoundsystem/stemgen-rt/releases/tag/v0.7.0 (model.onnx, SHA-256 0a49388dd2a47986ab9a161c8764c22853b4d601c188ac052eb530f076d513c7); training code https://github.com/sweetspotsoundsystem/StemgenRT-5.8",
   "benchmarks": {
     "machine": "poison-ivy (Ryzen 9 9950X3D), app venv onnxruntime 1.27, 2026-10-22",

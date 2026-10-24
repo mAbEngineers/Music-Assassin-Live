@@ -40,6 +40,7 @@ REDISTRIBUTABLE_MODELS=(
     "dpdfnet_baseline.onnx|dpdfnet_baseline.json|Apache-2.0-dpdfnet.txt"
     "dpdfnet2_48khz_hr.onnx|dpdfnet2_48khz_hr.json|Apache-2.0-dpdfnet.txt"
     "dtln_model_1.onnx dtln_model_2.onnx|dtln.json|MIT-dtln.txt"
+    "stemgen_rt_vocals.onnx|stemgen_rt_vocals.json|MIT-stemgen-rt.txt"
 )
 DEFAULT_MODEL_FILE="dpdfnet2_48khz_hr.onnx"
 ICON_SIZES=(16 22 24 32 48 64 128 256)

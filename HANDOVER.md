@@ -1043,7 +1043,7 @@ All uncommitted on `feat/separator-spike`. This is the three-step plan from
 
 **StemgenRT (A2).** `processors/stemgen.py`, `scripts/fetch_stemgen.py` and
 `models/stemgen_rt_vocals.json` — details in ROADMAP A2. The model lives in
-the data dir and is not bundled.
+the data dir and, since 2026-10-24, is bundled in the .deb.
 
 **Mask shaper (B4, C12).**
 - `audio/maskshape.py` runs in the engine after the processor.
