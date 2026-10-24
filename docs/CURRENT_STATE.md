@@ -90,7 +90,7 @@ got here: `docs/PIPELINE_HISTORY.md`.
    `dpdfnet_hr` stays default, bundled in the .deb (decided 2026-10-24; training data is
    non-commercial, flagged in its licence file). Cutting its music leak
    is next version's work (RESEARCH_IDEAS §1).
-   Done: the `MAX_GAIN = 1` fix (`b2687aa`). The re-measurement shows it costs
+   Done: the `MAX_GAIN = 1` fix (`47a086d`). The re-measurement shows it costs
    0.2 dB of image and removes a +17 dB burst. A level-referenced
    denominator is a separate, later improvement (§2.8).
 2. **Choose the default model by ear.** The sweeps are in (ROADMAP A2):

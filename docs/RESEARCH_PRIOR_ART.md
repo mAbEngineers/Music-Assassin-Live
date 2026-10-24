@@ -97,7 +97,7 @@ Google Play and search engines instead.
 
 Local copies (outside the repo, session scratchpad, may be cleaned up):
 the extracted `vocals_only.onnx` and the extraction/benchmark scripts were
-written under the Claude session's scratchpad `model_dl/` and `scripts/`.
+written under the assistant session's scratchpad `model_dl/` and `scripts/`.
 Regenerate from the release asset with the recipe above if they are gone.
 
 #### Train our own causal model — best quality per CPU
