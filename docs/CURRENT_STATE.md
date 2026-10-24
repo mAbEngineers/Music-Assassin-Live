@@ -13,8 +13,8 @@ When it disagrees with them, check the dates; this page was written
   blocked by total suppression: quiet input into `dpdfnet_hr` comes out
   silent (HANDOVER "What gates the 0.1.4 tag"; fix is ROADMAP B10).
 - **This branch, `feat/separator-spike`:** 42 commits ahead of `main` and 8
-  ahead of its own remote. On top of that, the large body of work below is
-  still **uncommitted**.
+  ahead of its own remote. Everything below is committed locally
+  (`b2687aa`, `d77ac08`); nothing is pushed.
 
 ## The finding that matters
 
@@ -53,7 +53,7 @@ Girls' voices (ROADMAP A2): `stemgen` keeps all of them; `dpdfnet_hr` loses up
 to 11 dB. Directions to try next: `docs/RESEARCH_IDEAS.md`. How the pipeline
 got here: `docs/PIPELINE_HISTORY.md`.
 
-## Uncommitted on this branch (2026-10-22/23)
+## Work on this branch (2026-10-22/24)
 
 - **Engine:** FIFO caps now follow the processor, and trimming keeps dry and
   wet in lockstep. Chunked separators were 84 % unprocessed before this.
@@ -72,7 +72,7 @@ got here: `docs/PIPELINE_HISTORY.md`.
     `stemgen` they only hurt.
 - **Stereo rebuild:** `MAX_GAIN` 8 → 1, which ends a +17 dB amplification
   of anti-phase content.
-  - **Uncommitted:** `85328cf` retracted it, on a measurement taken under
+  - Committed as `b2687aa`. `85328cf` had retracted it, on a measurement taken under
     sweep load.
   - **Re-measured idle 2026-10-24:** the image is restored at −3.1 dB
     against −2.9 dB with the old clamp. Full suite passes.
@@ -85,8 +85,11 @@ got here: `docs/PIPELINE_HISTORY.md`.
 
 ## Next, in order
 
-1. **Commit the `MAX_GAIN = 1` fix** (`stereo.py` plus its test). It is the
-   only uncommitted code on the branch. The re-measurement shows it costs
+1. **Stemgen ships as is** (user decision 2026-10-24): selectable in the picker,
+   `dpdfnet_hr` stays default, not bundled in the .deb (non-commercial training
+   data; bundling is one line in `scripts/build_deb.sh`). Cutting its music leak
+   is next version's work (RESEARCH_IDEAS §1).
+   Done: the `MAX_GAIN = 1` fix (`b2687aa`). The re-measurement shows it costs
    0.2 dB of image and removes a +17 dB burst. A level-referenced
    denominator is a separate, later improvement (§2.8).
 2. **Choose the default model by ear.** The sweeps are in (ROADMAP A2):

@@ -65,7 +65,7 @@ that take the stereo pair themselves.
 
 ## v5 — now
 
-2026-10-23, `6fda7f0`, `ceda3a8`, `fee7051` (the stereo clamp is uncommitted).
+2026-10-23, `6fda7f0`, `ceda3a8`, `fee7051`, `b2687aa` (stereo clamp).
 ![v5](pipeline/v5.svg)
 
 - **FIFO caps follow the processor.** They were a fixed 160 ms, so a chunked
@@ -74,7 +74,7 @@ that take the stereo pair themselves.
 - **Mask shaper** after every model: a suppression floor and release
   smoothing, powers smoothed so it cannot amplify. Off by default.
 - **StemgenRT**, a causal separator at 5.8 ms, through the stereo lane.
-- Uncommitted: the stereo rebuild's mask is capped at 1 (was 8).
+- The stereo rebuild's mask is capped at 1 (was 8).
 
 ## Ideas that would change the diagram next
 
