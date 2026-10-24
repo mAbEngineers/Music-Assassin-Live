@@ -137,6 +137,29 @@ def test_silence_stays_silent():
           f"peak {peak:.2e}")
 
 
+def test_cancelling_mono_cannot_amplify_the_pair():
+    """Where L and R cancel in the mono mix, |Dry_mono| is near zero and any
+    residual the model leaves reads as a huge mask, applied to the full-level
+    L and R. The old 8x clamp let that through as up to +18 dB
+    (RESEARCH_PRIOR_ART §2.8) — the same division-by-near-zero that broke
+    the first smoothing attempt. Out-of-phase content (wide pads, phase
+    tricks in mastering) is ordinary, so this is not a corner case."""
+    print("\nanti-phase content with a residual in wet")
+    rng = np.random.default_rng(7)
+    n = SR
+    side = 0.3 * rng.standard_normal(n)
+    centre = 0.005 * rng.standard_normal(n)
+    dry = np.stack([centre + side, centre - side], axis=1).astype(np.float32)
+    wet = (0.05 * rng.standard_normal(n)).astype(np.float32)   # model's leftovers
+    out = stream(dry, wet)
+    m = len(out) - LAT
+    got, ref = out[LAT:LAT + m], dry[:m]
+    worst = max(float(np.sqrt(np.mean(got[:, c] ** 2)) / np.sqrt(np.mean(ref[:, c] ** 2)))
+                for c in (0, 1))
+    check("no channel comes out louder than it went in", worst <= 1.0 + 1e-3,
+          f"out/in RMS {worst:.2f}")
+
+
 def test_suppressed_band_stays_suppressed_in_both_channels():
     """The reason for the mask formulation rather than side re-injection: a
     band the model killed stays killed even though it was hard-panned — i.e.
@@ -551,6 +574,7 @@ def main() -> int:
     test_todays_mono_path_collapses_the_image()
     test_unity_mask_returns_the_original_image()
     test_silence_stays_silent()
+    test_cancelling_mono_cannot_amplify_the_pair()
     test_suppressed_band_stays_suppressed_in_both_channels()
     test_streaming_consistency()
     test_engine_emits_a_stereo_wet_signal()

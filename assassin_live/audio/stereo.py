@@ -55,10 +55,15 @@ from ..processors.stft import sqrt_hann
 
 N_FFT, HOP = 512, 256
 
-# Runaway guard only. A magnitude-mask model cannot exceed 1.0 by design, but
-# the wet path also carries the band-limit filter and any future make-up gain,
-# and an unclamped |Wet|/|Dry| explodes wherever the dry bin is near-silent.
-MAX_GAIN = 8.0
+# De-musicing never needs a bin louder than the dry it came from. This was 8.0
+# (a "runaway guard" leaving room for the band-limit's ripple), and that room
+# was the bug: wherever L and R cancel in the mono mix, |Dry_mono| is near zero,
+# any residual in wet reads as a huge mask, and 8x of it lands on the
+# full-level L and R — measured +17 dB on anti-phase noise
+# (tests/test_stereo_rebuild.py). Capped at 1, such a bin passes the pair at
+# unity instead. What the cap gives up is the band-limit's sub-dB ripple above
+# 1. Same reasoning as audio/maskshape.py.
+MAX_GAIN = 1.0
 EPS = 1e-9
 
 
