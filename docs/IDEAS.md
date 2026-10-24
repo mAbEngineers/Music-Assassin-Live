@@ -110,6 +110,7 @@ cancels in the mono sum. Fix the reference, not the quotient (§5).
 | Fine-tune `stemgen` on anime-opening vocals | **idea** | If its licence and data allow (Q6) |
 | Small causal cleanup model on top of `stemgen` | **idea** | Predicts a correction mask rather than redoing separation |
 | OpenVINO with BF16 | **idea** | 2–3× on one large model in the offline app. The live notes only tested OpenVINO *through sherpa*, which statically links its own runtime. Relevant only if a large model goes live |
+| Demucs-class offline separators, live | **blocked on latency, not compute — worth re-pricing** | Their voice-keep-against-music-removal still beats everything tested live, which is the standing argument for revisiting them. They need **seconds** of future audio: Spleeter's quality keeps rising through 4 s windows and never flattens, and MRX/CDX23 are the same. So they can only run in a movie mode with a declared delay, which makes this a child of §6 rather than an independent idea. If a player does compensate, this becomes the strongest quality option on the page |
 | Streaming an unmodified offline model | **dead** | A ceiling, not a product. `RESEARCH_PRIOR_ART.md` §1.2 |
 | Any additional speech enhancer | **dead** | Category exhausted; all dominated by `dpdfnet_hr`. ROADMAP §11 |
 
@@ -168,6 +169,15 @@ music well and chews some voices; `stemgen` leaves voices intact and leaks
 audible music. Both sit on the Pareto frontier, which is exactly the condition
 under which combining them can beat either.
 
+The motivating observation is worth stating plainly, because it is the reason
+to expect a blend to be useful rather than merely cheap: **switching between
+the two models already feels like moving a permissiveness control.** If the
+model choice is itself the knob, then the knob currently has two positions,
+and a blend is the same knob made continuous. That is a far more direct route
+to the control B4 was reaching for than reshaping either model's mask — and
+unlike mask reshaping it adds a genuinely independent axis (two models that
+disagree), which is what 1.1 says is required.
+
 | idea | status | notes |
 |---|---|---|
 | Parallel blend as the permissiveness slider | **idea — the strongest unexplored lever** | Run both, mix by a ratio. **Blend per-bin gains, not waveforms**: `dpdfnet_hr` alters phase, so summing outputs risks comb filtering. Align them first (the lag estimator exists). ~4 ms of the 20 ms budget, latency of the slower. Check offline before building |
@@ -175,7 +185,8 @@ under which combining them can beat either.
 | Cascade: `stemgen`, then `dpdfnet_hr` on its output | **idea** | The enhancer then sees a mostly-voice signal, so its "music looks like voice" confusion matters less. +50 ms latency, ~2 ms/block. May still chew modulated voices |
 | Four-stem Wiener mask | **idea** | Run `stemgen`'s drums, bass and vocals heads and use `vocals² / Σ stems²` as the gain. Standard consistency trick, ~3× compute. A Wiener re-filter did nothing for MRX effects, so expect little |
 | Per-bin cleanup from the music estimate | **idea** | `input − stemgen` approximates the music; subtract with over-subtraction and a floor. Risk: spectral subtraction *creates* the metallic noise it is meant to remove |
-| Voice-activity expander on `stemgen`'s output | **idea** | Attenuate frames whose voice level falls far below its running level — aimed at the gap leak. Cheap, but trims breaths and quiet tails |
+| Voice-activity expander, a.k.a. gap gate, on `stemgen`'s output | **idea** | Attenuate frames whose voice level falls far below its running level — aimed squarely at the gap leak, which the stage videos show is where the leak is worst. Cheap, but trims breaths and quiet tails |
+| Pitch comb on `stemgen`'s output | **idea** | Keep the bins on the voice's harmonics from a pitch track and attenuate other tonal bins. Attacks the leak with a genuinely independent axis (harmonicity relative to a tracked F0, per 1.1), and is the same lever as §4's pitch protection seen from the other side |
 
 ## 4b. Musical noise — the "metallic" artefact specifically
 
@@ -195,7 +206,8 @@ behind it.
 
 | idea | status | notes |
 |---|---|---|
-| Modulated/sung voices are what `dpdfnet_hr` chews | **hypothesis, partly tested** | `vocal_ret_db` is measured on vocals *alone*, with no music, and reads −8.5 dB on `male_lead` against −0.9 on `sparse_acoustic` — so the damage is not caused by the mix. Whether *pitch modulation* drives it is untested: correlate per-clip damage against pitch range and speed |
+| Modulated/sung voices are what `dpdfnet_hr` chews | **under test — inconclusive so far** | `vocal_ret_db` is measured on vocals *alone*, with no music: −8.5 dB on `male_lead` against −0.9 on `sparse_acoustic`, so the damage comes from the voice and not the mix. `scripts/analyze_modulation.py` correlates per-clip damage against pitch range and speed. The first pass over 12 female clips was **inconclusive** — the strongest correlation was with *fraction voiced* at −0.41, which at n=12 is noise, and the speed measure read zero on half the clips (since fixed). The 20-clip result is pending. **Do not build the demodulation row below until this supports it** |
+| Which voices `stemgen` rescues | **measured** | 12 female clips × 24 mix ratios: `stemgen` loses **no** voice on any clip, while `dpdfnet_hr` loses −3.6 dB on average and −11.4 dB at worst (Slime, Kimi no Se, Oshi no Ko). `stemgen` has the better dSI-SDR on 22 of the 24 pairs; `dpdfnet_hr` wins only on Blood Blockade. Measured on the voice alone, which is what makes this a property of the voice rather than of the mix |
 | Demodulate, then de-music, then unwarp | **idea, high risk** | Warp time so pitch is near-constant, enhance, unwarp. Needs a causal pitch tracker with look-ahead, and the music warps too, smearing its pitches. Test the hypothesis above first |
 | Female voices specifically | **measured** | The original corpus was 100 % female (median F0 331 Hz), above most enhancer training data — but `male_lead` showed the problem too, so it is not purely a female-voice effect |
 | CleanMel / Mel-FullSubNet | **idea** | Enhance the mel spectrogram, resynthesise with a neural vocoder. Mel-FullSubNet has an online variant (15 past frames, no look-ahead). Open questions: both are speech enhancers, so they may treat music as speech too; a vocoder cannot restore what the mel discarded, including phase; licences and live CPU unchecked |
@@ -238,6 +250,9 @@ which other ideas are possible.
 | Stage videos: spectrograms, level curves, model-vs-oracle map | **shipped** | `scripts/visualize_stages.py`. Showed `stemgen`'s leak is worst in vocal gaps and the top octave, with horizontal lines marking tonal music |
 | Dump the chain's inner stages into the same video | **idea** | After downmix, after model, after band-limit, after shaper — so a defect can be localised to a stage instead of inferred |
 | Wide-stereo and out-of-phase corpus | **idea** | The stereo rebuild's failures all live in material the current corpus barely contains — see §5 |
+| Modulation analysis per clip | **shipped** | `scripts/analyze_modulation.py` — pitch range, speed and fraction voiced, correlated against measured damage. See §4c for what it has and has not shown |
+| Pipeline diagrams per version | **shipped** | `docs/PIPELINE_HISTORY.md` plus six SVGs in `docs/pipeline/`, generated by `scripts/draw_pipelines.py`. New boxes green, changed boxes amber, relative to the previous version |
+| Listening sets and stage videos on disk | **shipped** | `~/.local/state/music-assassin/bench/listen/` — `audio_male/` (8 clips) and `female/audio/` (12) each holding the original, `stemgen`, `dpdfnet_hr`, the offline separator and the ideal-mask reference. 16 male videos in `video/male/`, one audio track per stage (`#` switches them in mpv), with a model-versus-reference map showing leak red and cut voice blue |
 | Blind A/B re-ranking of models | **idea** | `scripts/ab_listen.sh`. The sighted ranking put `dpdfnet` third despite it being the only net-harmful model |
 | Synthetic tones as a music fixture | **dead** | Suppressed like noise (−47 dB) against real music's −0.4 to −1.7 dB. Guarded against in `test_live_e2e.py` |
 
