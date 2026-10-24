@@ -707,6 +707,43 @@ denominator can satisfy both. Untested — this is a design change to B3's core
 formulation, on a path that ships off by default, so it wants a decision rather
 than a quiet edit.
 
+**Correction to the correction, 2026-10-24 — the clamp works; the collapse was
+the timing flake.**
+
+The A/B was re-run on an idle machine. Local copies of the package, identical
+except for `stereo.py`, four runs each:
+
+| `MAX_GAIN` | image restored | image restored, lagged model | anti-phase |
+|---|---|---|---|
+| 8.0 (HEAD) | −2.9 to −3.0 dB, 4/4 | −3.0 dB | out/in 6.89, fails 4/4 |
+| 1.0 | −3.1, −6.0, −3.1, −3.2 dB, 4/4 | −3.2 dB | 1.00, passes 4/4 |
+
+The whole suite also passes with `MAX_GAIN = 1.0`.
+
+The −235.9 dB above is the value the test reports whenever the lag
+measurement has not finished before the measured tail. That is a run where
+the rebuild never engaged, not one where it collapsed the image. It fails
+that way under CPU load: the 2026-10-23 runs happened while two corpus
+sweeps were running. It also fails that way when run from the sftp-mounted
+tree, at any `MAX_GAIN`; HEAD's 8.0 failed the same check under load on
+2026-10-22. Run 2 here, at −6.0 dB, is the same effect partway: the rebuild
+engaged late inside the window.
+
+**Why the algebra above does not hold.** The mask is `|Wet| / |Dry_mono|`,
+applied to L and R. Anti-phase content that the model leaves alone gives
+`Wet ≈ Dry_mono`, so the mask is ≈ 1 and L and R pass through unchanged.
+Reconstructing them never needs a gain above 1. A mask above 1 only arises
+where wet *exceeds* the mono dry in a bin. That is the residual-over-
+cancellation case the clamp exists to stop, and the band-limit's sub-dB
+ripple. The latter is the measured 0.2 dB cost.
+
+**The denominator idea is still worth having, for a different reason.**
+Under the cap, a bin that cancels in mono passes the pair at unity. So
+side-only music in those bins is kept, never suppressed. Referencing the
+channel level instead would attenuate it. That bears on Q5, whether the
+restored side channel brings music back. It is a separate improvement, not a
+fix for the clamp.
+
 ### 2.9 Python in the real-time path
 
 The PortAudio callback is Python: it allocates on every block

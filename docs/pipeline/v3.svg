@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1704 450" width="1704" height="450" font-family="Helvetica, Arial, sans-serif">
+<defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#495057"/></marker></defs>
+<rect width="1704" height="450" fill="#ffffff"/>
+<text x="36" y="34" font-size="22" font-weight="700" fill="#212529">v3: stereo rebuild (B3)</text>
+<text x="36" y="56" font-size="13" fill="#495057">2026-08-18   commits: 997f66f</text>
+<rect x="1264" y="22" width="14" height="14" fill="#d3f9d8" stroke="#2f9e44"/><text x="1283" y="34" font-size="11" fill="#495057">new in this version</text>
+<rect x="1414" y="22" width="14" height="14" fill="#fff3bf" stroke="#e67700"/><text x="1433" y="34" font-size="11" fill="#495057">text changed</text>
+<rect x="1564" y="22" width="14" height="14" fill="#f1f3f5" stroke="#868e96"/><text x="1583" y="34" font-size="11" fill="#495057">unchanged</text>
+<text x="1264" y="56" font-size="11" fill="#495057">dashed outline = optional, user-toggled</text>
+<rect x="12" y="72.0" width="1680" height="96" rx="8" fill="#f8f9fa" stroke="#dee2e6"/>
+<text x="22" y="87.0" font-size="11" font-weight="700" fill="#868e96">Audio callback: real-time thread (PortAudio, 20 ms blocks)</text>
+<rect x="12" y="212.0" width="1680" height="96" rx="8" fill="#f8f9fa" stroke="#dee2e6"/>
+<text x="262" y="227.0" font-size="11" font-weight="700" fill="#868e96">Worker thread: mono models</text>
+<polyline points="168.0,125.0 186.0,125.0" fill="none" stroke="#495057" stroke-width="1.6" marker-end="url(#ar)"/>
+<polyline points="318.0,125.0 486.0,125.0" fill="none" stroke="#495057" stroke-width="1.6" marker-end="url(#ar)"/>
+<polyline points="618.0,125.0 1236.0,125.0" fill="none" stroke="#495057" stroke-width="1.6" marker-end="url(#ar)"/>
+<polyline points="1368.0,125.0 1386.0,125.0" fill="none" stroke="#495057" stroke-width="1.6" marker-end="url(#ar)"/>
+<polyline points="1518.0,125.0 1536.0,125.0" fill="none" stroke="#495057" stroke-width="1.6" marker-end="url(#ar)"/>
+<polyline points="318.0,265.0 336.0,265.0" fill="none" stroke="#495057" stroke-width="1.6" marker-end="url(#ar)"/>
+<polyline points="468.0,265.0 486.0,265.0" fill="none" stroke="#495057" stroke-width="1.6" marker-end="url(#ar)"/>
+<polyline points="618.0,265.0 636.0,265.0" fill="none" stroke="#495057" stroke-width="1.6" marker-end="url(#ar)"/>
+<polyline points="918.0,265.0 936.0,265.0" fill="none" stroke="#495057" stroke-width="1.6" marker-end="url(#ar)"/>
+<polyline points="1068.0,265.0 1236.0,265.0" fill="none" stroke="#495057" stroke-width="1.6" marker-end="url(#ar)"/>
+<polyline points="1368.0,265.0 1536.0,265.0" fill="none" stroke="#495057" stroke-width="1.6" marker-end="url(#ar)"/>
+<polyline points="252.0,156.0 252.0,234.0" fill="none" stroke="#495057" stroke-width="1.6" marker-end="url(#ar)"/>
+<text x="258.0" y="190.0" font-size="10" fill="#495057">block copy</text>
+<polyline points="1602.0,234.0 1602.0,201.0 1302.0,201.0 1302.0,156.0" fill="none" stroke="#495057" stroke-width="1.6" marker-end="url(#ar)"/>
+<text x="1608.0" y="196.0" font-size="10" fill="#495057">wet</text>
+<rect x="36.0" y="94.0" width="132" height="62" rx="6" fill="#f1f3f5" stroke="#868e96" stroke-width="1.8"/>
+<text x="102.0" y="121.5" font-size="10.5" font-weight="700" text-anchor="middle" fill="#212529">Null 'trap' sink</text>
+<text x="102.0" y="136.5" font-size="10.5" font-weight="400" text-anchor="middle" fill="#212529">.monitor source</text>
+<rect x="186.0" y="94.0" width="132" height="62" rx="6" fill="#f1f3f5" stroke="#868e96" stroke-width="1.8"/>
+<text x="252.0" y="114.0" font-size="10.5" font-weight="700" text-anchor="middle" fill="#212529">PortAudio duplex</text>
+<text x="252.0" y="129.0" font-size="10.5" font-weight="400" text-anchor="middle" fill="#212529">callback, 20 ms</text>
+<text x="252.0" y="144.0" font-size="10.5" font-weight="400" text-anchor="middle" fill="#212529">error: dry; watchdog</text>
+<rect x="1236.0" y="94.0" width="132" height="62" rx="6" fill="#f1f3f5" stroke="#868e96" stroke-width="1.8"/>
+<text x="1302.0" y="121.5" font-size="10.5" font-weight="700" text-anchor="middle" fill="#212529">mix dry / wet</text>
+<text x="1302.0" y="136.5" font-size="10.5" font-weight="400" text-anchor="middle" fill="#212529">ramp, 0-300 % wet</text>
+<rect x="1536.0" y="94.0" width="132" height="62" rx="6" fill="#f1f3f5" stroke="#868e96" stroke-width="1.8"/>
+<text x="1602.0" y="129.0" font-size="10.5" font-weight="700" text-anchor="middle" fill="#212529">Real output sink</text>
+<rect x="186.0" y="234.0" width="132" height="62" rx="26" fill="#f1f3f5" stroke="#868e96" stroke-width="1.8"/>
+<text x="252.0" y="261.5" font-size="10.5" font-weight="700" text-anchor="middle" fill="#212529">input queue</text>
+<text x="252.0" y="276.5" font-size="10.5" font-weight="400" text-anchor="middle" fill="#212529">to worker thread</text>
+<rect x="336.0" y="234.0" width="132" height="62" rx="6" fill="#f1f3f5" stroke="#868e96" stroke-width="1.8"/>
+<text x="402.0" y="261.5" font-size="10.5" font-weight="700" text-anchor="middle" fill="#212529">downmix</text>
+<text x="402.0" y="276.5" font-size="10.5" font-weight="400" text-anchor="middle" fill="#212529">L+R to mono</text>
+<rect x="636.0" y="234.0" width="282" height="62" rx="6" fill="#f1f3f5" stroke="#868e96" stroke-width="1.8"/>
+<text x="777.0" y="254.0" font-size="10.5" font-weight="700" text-anchor="middle" fill="#212529">[resample down] MODEL [up]</text>
+<text x="777.0" y="269.0" font-size="10.5" font-weight="400" text-anchor="middle" fill="#212529">gtcrn dpdfnet dtln dpdfnet_hr</text>
+<text x="777.0" y="284.0" font-size="10.5" font-weight="400" text-anchor="middle" fill="#212529">speechdenoiser</text>
+<rect x="1536.0" y="234.0" width="132" height="62" rx="26" fill="#fff3bf" stroke="#e67700" stroke-width="1.8"/>
+<text x="1602.0" y="254.0" font-size="10.5" font-weight="700" text-anchor="middle" fill="#212529">wet FIFO (stereo)</text>
+<text x="1602.0" y="269.0" font-size="10.5" font-weight="400" text-anchor="middle" fill="#212529">cap 160 ms,</text>
+<text x="1602.0" y="284.0" font-size="10.5" font-weight="400" text-anchor="middle" fill="#212529">drops oldest</text>
+<rect x="486.0" y="94.0" width="132" height="62" rx="26" fill="#f1f3f5" stroke="#868e96" stroke-width="1.8"/>
+<text x="552.0" y="121.5" font-size="10.5" font-weight="700" text-anchor="middle" fill="#212529">dry FIFO</text>
+<text x="552.0" y="136.5" font-size="10.5" font-weight="400" text-anchor="middle" fill="#212529">lockstep with wet</text>
+<rect x="486.0" y="234.0" width="132" height="62" rx="6" fill="#f1f3f5" stroke="#868e96" stroke-width="1.8" stroke-dasharray="6,3"/>
+<text x="552.0" y="254.0" font-size="10.5" font-weight="700" text-anchor="middle" fill="#212529">mid/side prefilter</text>
+<text x="552.0" y="269.0" font-size="10.5" font-weight="400" text-anchor="middle" fill="#212529">centre emphasis</text>
+<text x="552.0" y="284.0" font-size="10.5" font-weight="400" text-anchor="middle" fill="#212529">(optional, off)</text>
+<rect x="936.0" y="234.0" width="132" height="62" rx="6" fill="#f1f3f5" stroke="#868e96" stroke-width="1.8"/>
+<text x="1002.0" y="261.5" font-size="10.5" font-weight="700" text-anchor="middle" fill="#212529">band-limit</text>
+<text x="1002.0" y="276.5" font-size="10.5" font-weight="400" text-anchor="middle" fill="#212529">20 Hz - 20 kHz</text>
+<rect x="1386.0" y="94.0" width="132" height="62" rx="6" fill="#f1f3f5" stroke="#868e96" stroke-width="1.8"/>
+<text x="1452.0" y="121.5" font-size="10.5" font-weight="700" text-anchor="middle" fill="#212529">soft limiter</text>
+<text x="1452.0" y="136.5" font-size="10.5" font-weight="400" text-anchor="middle" fill="#212529">when wet &gt; 100 %</text>
+<rect x="1236.0" y="234.0" width="132" height="62" rx="6" fill="#d3f9d8" stroke="#2f9e44" stroke-width="1.8" stroke-dasharray="6,3"/>
+<text x="1302.0" y="254.0" font-size="10.5" font-weight="700" text-anchor="middle" fill="#212529">stereo rebuild</text>
+<text x="1302.0" y="269.0" font-size="10.5" font-weight="400" text-anchor="middle" fill="#212529">mask |wet| / |dry|</text>
+<text x="1302.0" y="284.0" font-size="10.5" font-weight="400" text-anchor="middle" fill="#212529">applied to L and R</text>
+<text x="36" y="340.0" font-size="13" font-weight="700" fill="#212529">What changed</text>
+<text x="36" y="360.0" font-size="12" fill="#343a40">New: optional stereo rebuild. The mono model's decision, |wet| / |dry mono|, is</text>
+<text x="36" y="378.0" font-size="12" fill="#343a40">applied per bin to the dry L and R, so the image the mono model destroyed returns.</text>
+<text x="36" y="396.0" font-size="12" fill="#343a40">Shipped off. Also added: the wants_stereo seam in processors, for models that take</text>
+<text x="36" y="414.0" font-size="12" fill="#343a40">the stereo pair themselves (no downmix, no rebuild). Nothing used it yet.</text>
+</svg>

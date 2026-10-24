@@ -503,6 +503,21 @@ axis.
 **The deciding fact.** `stemgen`'s leftover music sits at about −20 dB, and
 reaches −8 to −10 dB on its worst clips. That is plainly audible.
 
+**The girls'-voices complaint, 2026-10-24** (12 `anime_op_stereo` clips, the
+100 %-female category, both ratios; per-clip table from `scripts/bench_subset.py`):
+
+| | `dpdfnet_hr` | `stemgen` |
+|---|---|---|
+| voice kept (vocals-only probe) | −3.6 dB mean, worst −11.4 | **0.00 dB on all 12** |
+| dSI-SDR | +4.8 | **+10.6** |
+| clips with negative dSI-SDR | 5 of 24 pairs | 0 |
+| music left | **−46.8 dB** | −27.2 dB |
+
+`stemgen` has the better dSI-SDR on 22 of the 24 pairs. `dpdfnet_hr` wins
+only on one clip (Blood Blockade Battlefront). The worst `dpdfnet_hr` clips
+(Slime −11.4, Kimi no Se −7.1, Oshi no Ko −6.6) are the "missing voice"
+cases. It is the voice that is damaged, since the probe has no music in it.
+
 **What decides the default:** ROADMAP's standing judgement ("voice matters
 more than music removal") favours `stemgen`. Whether −20 dB of residual music
 is acceptable for this app's purpose is a listening question, not a metric.
