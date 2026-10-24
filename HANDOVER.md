@@ -42,13 +42,16 @@ mount. It worked earlier the same day and then stopped, so it is the mount,
 not the repo. The workaround that does work is `git commit-tree` +
 `git update-ref`; committing from the machine that owns the repo avoids it.
 
-**Simpler workaround, found 2026-10-23: `git commit -F <file>` works if the
-file is on local disk.** `-F -` (stdin, via heredoc) fails with the error
-above; `-F /tmp/.../msg.txt` succeeded four times in a row in the same
-checkout, in the same session, minutes apart. So the failing step is reading
-a message back through the mount, and writing the message outside the mount
-is enough — `commit-tree` + `update-ref` is not needed for this. Keep the
-message files off the mount and out of the repo.
+**Partial workaround, and a correction to it (2026-10-23/24).** `-F -`
+(stdin, via heredoc) fails reliably. `git commit -F <file>` with the message
+on local disk, off the mount, succeeded five times out of six in two
+sessions — but **the sixth failed with the identical error, and an immediate
+retry of the exact same command succeeded.** So the fault is transient mount
+I/O, not the message path, and an earlier version of this note overstated
+the fix. In practice: write the message to a file outside the mount, use
+`-F`, and **retry once on failure** before reaching for `commit-tree` +
+`update-ref`. Nothing is left half-committed when it fails — the index stays
+staged.
 
 **The `.deb` cannot be built over the gvfs mount either**, and the errors
 point nowhere near packaging. PyInstaller's `--add-data` rejects any source
@@ -1066,7 +1069,8 @@ reference phase prints nothing) fails on the gvfs file, and the traceback
 can't be written either. Point `>` at local disk; reads from the mount are
 fine. Importing `bench_quality` over the mount alone takes ~2 minutes.
 
-**Also (2026-10-23):** `audio/stereo.py`'s `MAX_GAIN` went from 8 to 1.
+**Also (2026-10-23; retracted in `85328cf`, re-confirmed 2026-10-24 — see
+RESEARCH_PRIOR_ART §2.8):** `audio/stereo.py`'s `MAX_GAIN` went from 8 to 1.
 With anti-phase content plus a residual in wet, the 8× clamp amplified the
 pair by +17 dB. The new test reproduces that case and failed (6.89×) before
 the fix.

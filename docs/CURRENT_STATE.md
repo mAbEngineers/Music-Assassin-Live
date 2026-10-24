@@ -38,6 +38,21 @@ and −8 to −10 dB on its worst clips, is plainly audible. Which matters more
 is a listening and product decision. StemgenRT costs 5.8 ms of latency and
 2.3 ms per 20 ms block. Full table: ROADMAP A2.
 
+## Listening and looking (2026-10-24)
+
+Rendered to local disk under `~/.local/state/music-assassin/bench/listen/`:
+- `audio_male/`: 8 male-lead clips, both ratios; input, `stemgen`,
+  `dpdfnet_hr`, offline `ceiling`, ideal-mask `oracle` as WAVs.
+- `female/audio/`: 12 female-vocal clips, same files.
+- `video/male/`, `video/female/`: one mp4 per clip. Waveform and mel
+  spectrogram for every stage, a model-vs-oracle map (red = leak, blue = voice
+  cut), level curves, and one audio track per stage (mpv: `#` cycles).
+  Make more with `scripts/visualize_stages.py`.
+
+Girls' voices (ROADMAP A2): `stemgen` keeps all of them; `dpdfnet_hr` loses up
+to 11 dB. Directions to try next: `docs/RESEARCH_IDEAS.md`. How the pipeline
+got here: `docs/PIPELINE_HISTORY.md`.
+
 ## Uncommitted on this branch (2026-10-22/23)
 
 - **Engine:** FIFO caps now follow the processor, and trimming keeps dry and
@@ -107,10 +122,12 @@ is a listening and product decision. StemgenRT costs 5.8 ms of latency and
 - **Imports over the mount are slow:** about 2 minutes for `bench_quality`.
 - **The scratchpad is wiped on reboot or date change.** Long runs must
   `setsid nohup` and write their results outside it.
-- **`git commit -m` and `-F -` fail over the gvfs mount** (`could not read
-  commit message`). `git commit -F <file>` works if the file is on local disk,
-  off the mount — verified four times on 2026-10-23, and simpler than the
-  `commit-tree` + `update-ref` route HANDOVER describes.
+- **`git commit` is flaky over the gvfs mount** (`could not read commit
+  message`). `-m` and `-F -` fail reliably; `-F <file>` with the message on
+  local disk works most of the time and failed once in six, where an
+  immediate retry of the same command worked. Retry once before reaching for
+  HANDOVER's `commit-tree` + `update-ref` route. The index stays staged on
+  failure, so nothing is half-committed.
 - **`test_stereo_rebuild` is timing-based.** It fails under CPU load *and*
   when run from the sftp-mounted tree. A −235.9 dB "side retained" means the
   rebuild never engaged, not that it collapsed the image. For an A/B,

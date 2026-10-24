@@ -188,8 +188,18 @@ behind it.
 | 2-D median or morphological opening on the gain mask | **idea** | Deletes isolated bins, keeps connected regions. Cheap and directly aimed at the mechanism |
 | Temporal mask smoothing | **measured** | On `male_lead` it took `stemgen`'s musical noise from −6.5 to −10.4 (kurtosis, lower better) for 1 dB of dSI-SDR and 4 dB less music removed. On `nasheed` it barely moved — another instance of 1.3's lesson about category averages |
 | Decision-directed smoothing (Ephraim–Malah) | **idea** | Classic noise-suppressor machinery, designed for exactly this |
-| Mel-band gain smoothing as a post-filter | **idea** | Cheaper than a vocoder (§6a) and also cuts isolated bins |
+| Mel-band gain smoothing as a post-filter | **idea** | Cheaper than a vocoder (§4c) and also cuts isolated bins |
 | Track it with `musical_noise` kurtosis and `clicks` | **shipped** | So a fix can be judged before listening |
+
+## 4c. Voice damage, and the mel domain
+
+| idea | status | notes |
+|---|---|---|
+| Modulated/sung voices are what `dpdfnet_hr` chews | **hypothesis, partly tested** | `vocal_ret_db` is measured on vocals *alone*, with no music, and reads −8.5 dB on `male_lead` against −0.9 on `sparse_acoustic` — so the damage is not caused by the mix. Whether *pitch modulation* drives it is untested: correlate per-clip damage against pitch range and speed |
+| Demodulate, then de-music, then unwarp | **idea, high risk** | Warp time so pitch is near-constant, enhance, unwarp. Needs a causal pitch tracker with look-ahead, and the music warps too, smearing its pitches. Test the hypothesis above first |
+| Female voices specifically | **measured** | The original corpus was 100 % female (median F0 331 Hz), above most enhancer training data — but `male_lead` showed the problem too, so it is not purely a female-voice effect |
+| CleanMel / Mel-FullSubNet | **idea** | Enhance the mel spectrogram, resynthesise with a neural vocoder. Mel-FullSubNet has an online variant (15 past frames, no look-ahead). Open questions: both are speech enhancers, so they may treat music as speech too; a vocoder cannot restore what the mel discarded, including phase; licences and live CPU unchecked |
+| Input-level normalisation | **idea** | `dpdfnet_hr` changes behaviour with level, and quiet input comes out silent — this gates the 0.1.4 tag. ROADMAP B10 |
 
 ## 5. Stereo image
 
@@ -214,16 +224,6 @@ which other ideas are possible.
 | Test whether players actually compensate (mpv, Firefox, Chromium) | **idea — do this first** | Half a day, and a decision input rather than an implementation. PipeWire 1.0.5 here would need a native `pw_filter`; Loopback `ProcessLatency` needs 1.4+ |
 | Native `pw_filter` / LADSPA node | **idea** | ARCHITECTURE Phase 3. Would also fix A/V sync properly |
 | Preallocated ring buffers instead of concatenate/slice FIFOs | **idea** | Reduces allocation churn in the realtime path. §2.9 |
-
-## 6a. Voice damage, and the mel domain
-
-| idea | status | notes |
-|---|---|---|
-| Modulated/sung voices are what `dpdfnet_hr` chews | **hypothesis, partly tested** | `vocal_ret_db` is measured on vocals *alone*, with no music, and reads −8.5 dB on `male_lead` against −0.9 on `sparse_acoustic` — so the damage is not caused by the mix. Whether *pitch modulation* drives it is untested: correlate per-clip damage against pitch range and speed |
-| Demodulate, then de-music, then unwarp | **idea, high risk** | Warp time so pitch is near-constant, enhance, unwarp. Needs a causal pitch tracker with look-ahead, and the music warps too, smearing its pitches. Test the hypothesis above first |
-| Female voices specifically | **measured** | The original corpus was 100 % female (median F0 331 Hz), above most enhancer training data — but `male_lead` showed the problem too, so it is not purely a female-voice effect |
-| CleanMel / Mel-FullSubNet | **idea** | Enhance the mel spectrogram, resynthesise with a neural vocoder. Mel-FullSubNet has an online variant (15 past frames, no look-ahead). Open questions: both are speech enhancers, so they may treat music as speech too; a vocoder cannot restore what the mel discarded, including phase; licences and live CPU unchecked |
-| Input-level normalisation | **idea** | `dpdfnet_hr` changes behaviour with level, and quiet input comes out silent — this gates the 0.1.4 tag. ROADMAP B10 |
 
 ## 7. Measurement and evaluation
 
