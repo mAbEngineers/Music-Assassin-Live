@@ -22,20 +22,21 @@ The shipped models are speech enhancers, so they keep anything voice-like.
 A real separator is the only route to the product promise (ROADMAP §2).
 One now runs live: **StemgenRT** (`stemgen`, ROADMAP A2).
 
-`male_lead` sweep, 16 clip/ratio pairs:
+Measured 2026-10-24 over the whole corpus (234 clip/ratio pairs):
 
-| | voice gain (dSI-SDR) | voice lost | music left | stereo |
+| | voice gain (dSI-SDR) | voice damage | music left | stereo |
 |---|---|---|---|---|
-| `dpdfnet_hr` (default) | +0.3 dB | −8.5 dB | −48 dB | collapsed |
-| `stemgen` | **+9.9 dB** | **0 dB** | −24 dB | **kept** |
+| `dpdfnet_hr` (default) | +6.1 dB | −3.0 dB, `vocal-loss` on 46 clips | **−41 dB** | collapsed |
+| `stemgen` | **+7.9 dB** | **none** | −22 dB | **kept** |
 
-StemgenRT costs 5.8 ms of latency and 2.3 ms per 20 ms block. The cost is
-that it leaves twice as much music, in dB. Two runs decide whether it
-becomes the default:
-- the whole-corpus comparison;
-- the `nasheed` sweep.
+On `nasheed` alone (130 pairs), `dpdfnet_hr` wins dSI-SDR (+7.7 against
++5.7). It also removes about twice as much music there.
 
-Both write to `~/.local/state/music-assassin/bench/stemgen/`.
+**Neither model wins outright.** StemgenRT keeps the voice and the image;
+`dpdfnet_hr` removes more music. StemgenRT's leftover music, about −20 dB
+and −8 to −10 dB on its worst clips, is plainly audible. Which matters more
+is a listening and product decision. StemgenRT costs 5.8 ms of latency and
+2.3 ms per 20 ms block. Full table: ROADMAP A2.
 
 ## Uncommitted on this branch (2026-10-22/23)
 
@@ -51,15 +52,16 @@ Both write to `~/.local/state/music-assassin/bench/stemgen/`.
   - UI: both are sliders on the panel; the CLI has `--limit-db` and
     `--smoothing-ms`.
   - Defaults: both off.
-  - Measured effect: they help `dpdfnet_hr` and hurt `stemgen`.
-- **Stereo rebuild:** `MAX_GAIN` went from 8 to 1. It was amplifying
-  anti-phase content by +17 dB. **Not committed, and not ready:** the clamp
-  fixes the amplification but collapses the stereo image completely —
-  `test_stereo_rebuild` fails deterministically (3/3) at −235.9 dB side
-  retained, the same value the bypassed mono path reports. The two
-  requirements are mutually exclusive under a quotient clamp; the denominator
-  is the real lever. Measurement and fix direction in
-  `RESEARCH_PRIOR_ART.md` §2.8.
+  - Measured effect: on `dpdfnet_hr`, a 20 dB floor ends pumping (67 → 0
+    clips on `nasheed`) at the cost of 19 dB of music suppression. On
+    `stemgen` they only hurt.
+- **Stereo rebuild:** `MAX_GAIN` 8 → 1, which ends a +17 dB amplification
+  of anti-phase content.
+  - **Uncommitted:** `85328cf` retracted it, on a measurement taken under
+    sweep load.
+  - **Re-measured idle 2026-10-24:** the image is restored at −3.1 dB
+    against −2.9 dB with the old clamp. Full suite passes.
+  - Details in `RESEARCH_PRIOR_ART.md` §2.8, "Correction to the correction".
 - **Bench:** `shape_mask()` had its alignment inverted, which voids every B4
   sweep number before 2026-10-22. Retraction in HANDOVER.
 - **Docs:**
@@ -68,12 +70,14 @@ Both write to `~/.local/state/music-assassin/bench/stemgen/`.
 
 ## Next, in order
 
-1. **Decide what to do about `MAX_GAIN`** (`RESEARCH_PRIOR_ART.md` §2.8). It
-   is the only uncommitted code left on the branch, and it currently trades a
-   real +17 dB amplification bug for a total loss of the stereo image. Neither
-   value is shippable; the denominator needs changing.
-2. **Read the two sweep results** and decide the default model. If StemgenRT
-   holds up, the B4/B9/B10 polish on `dpdfnet_hr` drops in priority.
+1. **Commit the `MAX_GAIN = 1` fix** (`stereo.py` plus its test). It is the
+   only uncommitted code on the branch. The re-measurement shows it costs
+   0.2 dB of image and removes a +17 dB burst. A level-referenced
+   denominator is a separate, later improvement (§2.8).
+2. **Choose the default model by ear.** The sweeps are in (ROADMAP A2):
+   StemgenRT keeps the voice, `dpdfnet_hr` removes more music. Listen to both
+   on a few `nasheed` and `male_lead` clips, using `bench_quality.py
+   --dump-audio`.
 3. **Listen.** The by-ear checks still open:
    - StemgenRT versus `dpdfnet_hr`;
    - floor and smoothing on `dpdfnet_hr`;
@@ -107,8 +111,10 @@ Both write to `~/.local/state/music-assassin/bench/stemgen/`.
   commit message`). `git commit -F <file>` works if the file is on local disk,
   off the mount — verified four times on 2026-10-23, and simpler than the
   `commit-tree` + `update-ref` route HANDOVER describes.
-- **`test_stereo_rebuild` is timing-based** and fails under CPU load. Its
-  result means nothing while a sweep is running.
+- **`test_stereo_rebuild` is timing-based.** It fails under CPU load *and*
+  when run from the sftp-mounted tree. A −235.9 dB "side retained" means the
+  rebuild never engaged, not that it collapsed the image. For an A/B,
+  compare local copies on an idle machine.
 
 ## Reading order
 
@@ -118,3 +124,8 @@ Both write to `~/.local/state/music-assassin/bench/stemgen/`.
 4. HANDOVER "What landed 2026-10-22".
 5. `RESEARCH_PRIOR_ART.md` §2.11.
 6. Everything else as needed.
+
+If the next step is not working and you want the option space rather than the
+plan, read `IDEAS.md`: every idea raised for this project, shipped or dead or
+never tried, grouped by the problem it addresses, with four principles at the
+top that each prune a whole family of approaches.

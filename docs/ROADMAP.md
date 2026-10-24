@@ -469,8 +469,45 @@ the .deb until the training-data question is settled.
 - It loses no voice in any band, and it keeps the stereo image.
 - What it gives up: it removes about half as much music in dB. Music sits at
   −24 dB instead of −48, with the worst clip at −9.9 dB.
-- This is one category, and the one where `dpdfnet_hr` does worst. The
-  whole-corpus run and `nasheed` decide whether it becomes the default.
+- This is one category, and the one where `dpdfnet_hr` does worst.
+
+**Whole corpus and `nasheed`, 2026-10-24 — no outright winner; a product call.**
+CSVs: `bench/stemgen/models_all.csv` and `shaper_nasheed.csv`.
+
+| | whole corpus (234 pairs) | | `nasheed` (130 pairs) | |
+|---|---|---|---|---|
+| | `stemgen` | `dpdfnet_hr` | `stemgen` | `dpdfnet_hr` |
+| dSI-SDR | **+7.89** | +6.13 | +5.69 | **+7.68** |
+| music left in vocal gaps | −22.2 dB | **−41.2 dB** | −19.1 dB | **−36.9 dB** |
+| worst clip, music left | −9.6 dB | **−24.5 dB** | −7.5 dB | **−18.1 dB** |
+| vocals-only probe | **−0.05 dB** | −3.03 dB | **−0.09 dB** | −1.49 dB |
+| SAR (artifacts) | **9.63** | 6.42 | **8.93** | 8.04 |
+| musical noise | **−8.05** | −2.65 | **−7.64** | −5.58 |
+| stereo image | **−8 dB** | collapsed | **−7 dB** | collapsed |
+| `vocal-loss` tag | **0/234** | 46/234 | | |
+| `pumping` tag | **93/234** | 105/234 | 44/130 | 67/130 |
+
+Both models are on the Pareto frontier, so neither beats the other on every
+axis.
+
+**What `stemgen` wins on:**
+- it never damages the voice, in any band;
+- it keeps the stereo image;
+- it has fewer artifacts and less musical noise.
+
+**What `dpdfnet_hr` wins on:**
+- it removes about twice as much music, in dB;
+- on `nasheed`, the largest category and the core use case, it also wins
+  dSI-SDR.
+
+**The deciding fact.** `stemgen`'s leftover music sits at about −20 dB, and
+reaches −8 to −10 dB on its worst clips. That is plainly audible.
+
+**What decides the default:** ROADMAP's standing judgement ("voice matters
+more than music removal") favours `stemgen`. Whether −20 dB of residual music
+is acceptable for this app's purpose is a listening question, not a metric.
+Listen to `stemgen` against `dpdfnet_hr` on a few `nasheed` and `male_lead`
+clips before changing the default.
 
 ### A3. Make the model registry data-driven
 
@@ -966,7 +1003,25 @@ Conclusions so far:
 - The shaper is a `dpdfnet_hr` control. It should stay off by default on
   `stemgen`.
 - The old "ruled out on `dpdfnet_hr`" verdict does not hold.
-- `nasheed` is still running.
+
+**`nasheed`, 2026-10-24 (130 pairs, `dpdfnet_hr`).** The result matches
+`male_lead`: each control trades music suppression for voice smoothness.
+
+| | dSI-SDR | music | musNoise | `pumping` |
+|---|---|---|---|---|
+| baseline | 7.68 | −36.9 | −5.58 | 67 |
+| `release_ms=80` | 7.51 | −29.7 | −0.91 | 48 |
+| `floor_db=20` | 7.90 | −18.2 | +6.04 | ≈0 (out of the top tags) |
+| both | 7.62 | −17.4 | +6.50 | ≈0 |
+
+- A floor of 20 dB practically eliminates pumping (67 → 0 clips). It pays
+  for that with 19 dB of music suppression and higher musical noise.
+- 80 ms of release removes about a third of the pumping (67 → 48) more
+  cheaply.
+- On `stemgen` every setting lowers dSI-SDR again, so keep it off there.
+- Defaults stay off until someone listens. The trade is exactly ROADMAP Q1's
+  question: how much music, and how much musical noise, is a kept syllable
+  worth?
 
 ### B9. Give the top octave back — the damage is concentrated there
 
@@ -2358,6 +2413,12 @@ SFX are worth keeping but how much latency and CPU that is worth.
 ---
 
 ## 11. Dead ends — measured, rejected, do not re-explore
+
+> `docs/IDEAS.md` indexes this section alongside every idea that is *not*
+> dead — parked, never tried, or shipped — because which family an idea
+> belongs to is usually more useful than its verdict. Add new ideas there,
+> and move them here once something measures them out.
+
 
 - **Any additional speech enhancer.** `dpdfnet8`: 2× slower than DeepFilterNet
   *and* bandwidth-capped at 8 kHz. `MetricGAN+`: fast but 16 kHz ceiling.
