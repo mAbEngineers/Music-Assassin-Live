@@ -64,6 +64,18 @@ XFADE_BLOCKS = 1     # gain ramp spread over one block == 20 ms
 # 2026-10-22, tests/test_engine_chunked.py).
 BASE_FIFO_BLOCKS = 8
 
+# A stall of the worker (a scheduling hiccup, a model loaded on the UI thread,
+# a Bluetooth sink waking up) leaves the callback playing dry for k blocks;
+# when the worker catches up, it delivers k blocks at once, and the callback
+# takes one out per block in, so those k blocks stay queued: k * 20 ms of
+# delay that nothing ever drains (tests/test_engine_chunked.py reproduces
+# it). It is trimmed away, once, while the input is quiet --
+# a paused video, a gap -- where cutting audio cannot be heard.
+QUIET_RMS = 10 ** (-60 / 20)
+QUIET_BLOCKS = 3             # 60 ms of quiet before the trim is allowed
+BACKLOG_SLACK = BLOCK        # standing backlog tolerated before a trim is worth it
+CHUNKED_BLOCKS = 4           # a processor holding more than this answers in chunks
+
 LIMITER_THRESHOLD = 0.8  # below this, output passes through untouched
 LIMITER_CEILING = 0.98   # peaks above threshold compress toward this, never past it
 
@@ -191,6 +203,7 @@ class AudioEngine:
         # much from the head of _dry_out (handed over under self._lock).
         # Dry dropped by the callback at its cap -> the matching wet has not
         # been produced yet, so the callback skips that much of it later.
+        self._quiet_run = 0      # consecutive quiet input blocks, callback-only
         self._dry_drop = 0       # written by worker, consumed by callback
         self._wet_skip = 0       # callback-thread-only
 
@@ -718,6 +731,7 @@ class AudioEngine:
         # what bench_quality measures end-to-end. Smoothed because _out is
         # filled by another thread, so any single reading jitters by up to a
         # block.
+        self._trim_standing_backlog(indata)
         self._lag_ema = 0.9 * self._lag_ema + 0.1 * len(self._dry_out)
 
         wet = np.empty_like(dry)
@@ -742,6 +756,36 @@ class AudioEngine:
         outdata[:] = _soft_limit(mixed) if wet_g > 1.0 else mixed
         self._levels.append(float(np.sqrt(np.mean(np.square(outdata)))))
         self._levels_in.append(float(np.sqrt(np.mean(np.square(indata)))))
+
+    def _trim_standing_backlog(self, indata: np.ndarray) -> None:
+        """Callback thread. Cut the processed audio still queued after this
+        block's own take, and the dry it is paired with, once the input has
+        been quiet a moment. The worker refills one block before the next
+        callback, so nothing is left to underrun.
+
+        Both FIFOs lose the same count from their heads, so the pairing is
+        untouched; only the delay between them and the live input shrinks.
+        Skipped for a chunked processor, whose output normally sits in the
+        FIFO a chunk at a time, and while either side still owes the other
+        a drop.
+        """
+        if float(np.sqrt(np.mean(np.square(indata)))) < QUIET_RMS:
+            self._quiet_run += 1
+        else:
+            self._quiet_run = 0
+            return
+        if (self._quiet_run < QUIET_BLOCKS or self._wet_skip
+                or self.proc.latency_samples > CHUNKED_BLOCKS * BLOCK):
+            return
+        with self._lock:
+            if self._dry_drop:
+                return
+            cut = min(len(self._out), len(self._dry_out))
+            if cut < BACKLOG_SLACK:
+                return
+            self._out = self._out[cut:]
+            self._dry_out = self._dry_out[cut:]
+        self.stats.backlog_trimmed += cut
 
     def _swap_runtime(self, processor: StreamProcessor) -> None:
         """Install a new model. Worker thread only — see set_processor.
