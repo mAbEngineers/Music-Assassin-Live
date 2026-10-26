@@ -636,6 +636,21 @@ class AudioEngine:
             self._mix_pad = 0
             self._wet_skip = 0
             self._lag_ema = 0.0
+            # The one flush. The worker cleared _in_q and _out when it
+            # installed the model, but this thread may already have been
+            # past its check for the flag, and then put one more block into
+            # _in_q (and its dry into _dry_out) after that clear. Wiping
+            # _dry_out here without wiping _in_q again would leave that
+            # block to be answered, paired with dry that is gone: wet one
+            # block (20 ms) ahead of dry for the rest of the session. So
+            # everything that holds audio is emptied together, here, by the
+            # thread that fills it; the worker waits (_work) until this ran,
+            # so nothing is in flight while it does.
+            with self._in_q.mutex:
+                self._in_q.queue.clear()
+            with self._lock:
+                self._out = np.zeros((0, 2), dtype=np.float32)
+                self._dry_drop = 0
         pad = self._mix_pad_pending
         if pad is not None:
             self._mix_pad_pending = None
@@ -789,6 +804,12 @@ class AudioEngine:
             if pending is not None:
                 self._pending_runtime = None
                 self._swap_runtime(pending)
+            if self._fifo_reset_pending:
+                # The callback is about to flush every queue at once; a
+                # block taken now would be answered after that flush with
+                # its dry already gone.
+                time.sleep(0.002)
+                continue
             try:
                 block = self._in_q.get(timeout=0.2)
             except queue.Empty:

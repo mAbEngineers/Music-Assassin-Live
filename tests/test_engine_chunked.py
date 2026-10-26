@@ -231,6 +231,38 @@ def test_shaper_toggle_keeps_lockstep():
               f"{eng.stats.fallback_blocks} fallback blocks")
 
 
+def test_swap_straddling_a_callback_does_not_skew_the_pair():
+    print("\nmodel switched while the callback is mid-block")
+    rng = np.random.default_rng(3)
+    n = 120
+    mono = (0.1 * rng.standard_normal((n, BLOCK, 1))).astype(np.float32)
+    x = np.repeat(mono, 2, axis=2)
+    eng = AudioEngine(MonoNegate())
+    eng._mask_lag = 0
+    eng._running = True
+    eng._wet_target = eng._wet_gain = 0.5
+    eng.set_bandlimit(False)
+    out = np.zeros_like(x)
+    for i, blk in enumerate(x):
+        if i == 60:
+            # The worker installs the new model, and the callback -- already
+            # past its check for the reset flag -- puts its block in _in_q
+            # after the worker's clear. Done by hand, in that order.
+            eng._swap_runtime(MonoNegate())
+            eng._mask_lag = 0
+            eng._in_q.put_nowait(blk.copy())
+        eng._callback(blk, out[i], BLOCK, None, None)
+        while not eng._in_q.empty():
+            eng._process_block(eng._in_q.get_nowait())
+    eng._running = False
+    y = out[70:]
+    resid = float(np.sqrt(np.mean(y ** 2)))
+    check("50/50 cancels again after the switch (wet and dry still paired)",
+          resid < 1e-5, f"residual RMS {resid:.2e} (input 1e-1)")
+    check("nothing is left queued from before the switch",
+          len(eng._out) <= BLOCK, f"{len(eng._out)} samples in _out")
+
+
 def main() -> int:
     print("engine vs chunked / stalling processors (no audio hardware required)")
     test_chunked_output_is_processed()
@@ -238,6 +270,7 @@ def main() -> int:
     test_trim_keeps_lockstep()
     test_caps_follow_the_processor()
     test_shaper_toggle_keeps_lockstep()
+    test_swap_straddling_a_callback_does_not_skew_the_pair()
     print(f"\n{'FAIL' if FAILURES else 'PASS'}"
           + (f" — {len(FAILURES)}: {', '.join(FAILURES)}" if FAILURES else ""))
     return 1 if FAILURES else 0
