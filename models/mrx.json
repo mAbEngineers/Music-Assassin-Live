@@ -1,0 +1,64 @@
+{
+  "name": "mrx",
+  "file": "mrx.int8.onnx",
+  "runtime": "onnxruntime",
+  "type": "cinematic three-way separation (dialogue / music / effects)",
+  "architecture": "MERL cocktail-fork separation (MRX): bidirectional LSTM over three parallel STFT resolutions (1024/2048/8192, hop 256), one magnitude input and one [1, 3, F, T] mask output per resolution, masked iSTFTs summed. int8 quantised; the graph's own metadata reads 'compact: int8, budget 40 dB'",
+  "sample_rate": 44100,
+  "channels": 1,
+  "hop": 256,
+  "stem_order": "mask axis 1 is (music, speech, sfx); processors/mrx.py keeps speech, plus sfx when set_keep_effects is on",
+  "license": "MIT (merlresearch/cocktail-fork-separation). int8 ONNX mirror: huggingface.co/audiojs/mrx, SHA-256 d876c92d224f5d8cd2207d528b23369da895a6de71fb24132416fcb16f9f8424, 31287081 bytes, pinned by scripts/fetch_mrx.py. CAVEAT: trained on DnR (Divide and Remaster), whose component corpora carry their own terms -- NOT yet checked, and so NOT bundled into the .deb. Same open question as stemgen_rt_vocals.json, and it must be settled before redistribution.",
+  "source": "https://github.com/merlresearch/cocktail-fork-separation (paper: 'The Cocktail Fork Problem: Three-Stem Audio Separation for Real-World Soundtracks', ICASSP 2022)",
+  "why_it_is_here": "The only model in this registry with a separate effects output, and therefore the only route to 'keep sound effects' live. Every speech enhancer here emits one scalar per bin saying how speech-like it is; drums and sound effects are adjacent in that single ranking, so no monotonic post-processing of it can keep one and drop the other (docs/IDEAS.md 1.1, ROADMAP section 11's 2026-10-23 scope note). A separate effects mask is a second axis of evidence rather than a reshuffle of the first.",
+  "benchmarks": {
+    "machine": "poison-ivy (Ryzen 9 9950X3D), app venv onnxruntime 1.27, intra_op_num_threads=1 as ort_util.make_session pins it, 2026-10-26",
+    "cpu_ms_per_second_of_audio": 83,
+    "rtf_single_window": 0.083,
+    "rtf_at_default_chunk": 0.1,
+    "rtf_note": "Flat from 1 s to 8 s chunks (79-90 ms/s); a 0.5 s chunk costs more per second (104 ms/s) on per-call overhead. Steady-state RTF is chunk/(chunk-2*edge) times the single-window figure, so 1.25x at the 10% edge this ships with. An earlier 0.33 reading was onnxruntime shape-planning amortised over 6 s, not steady state.",
+    "stage_split": "session about two thirds, iSTFT about a quarter, STFT about a ninth",
+    "algorithmic_latency_ms_at_default": 1805
+  },
+  "chunk_sweep": {
+    "what": "Error-to-signal ratio in dB of the streaming processor against one full 30 s pass over the same clip, which is what the offline app ships and what the maintainer preferred by ear. Lower is closer to that result. Reference computed independently of the streaming code so a window-maths bug shows up rather than cancelling.",
+    "corpus": "3 male-lead music+vocal clips, 30 s each, ~/.local/state/music-assassin/bench/b3/audio_male/*a100_input.wav, 2026-10-26",
+    "edge": "10% of chunk at each end",
+    "dialogue_esr_db": {
+      "500": -1.8,
+      "1000": -4.7,
+      "2000": -6.2,
+      "4000": -9.5,
+      "8000": -13.0
+    },
+    "effects_esr_db": {
+      "500": 4.6,
+      "1000": 2.4,
+      "2000": -1.1,
+      "4000": -5.2,
+      "8000": -8.1
+    },
+    "reading": "About 3 dB per doubling, and the effects stem trails the dialogue stem by 3-5 dB at every chunk. A positive figure means the error exceeds the reference's own energy, which is where the 500 ms and 1000 ms effects stems sit. Nothing within a live latency budget reproduces the 30 s result; 2000 ms is the shortest chunk whose effects stem errs by less than its own energy, which is why it is the default.",
+    "caveat": "These clips are music plus vocals with no actual sound effects, so this measures how stable MRX's decisions are against chunk length -- the quantity that sets the latency -- and NOT how well real effects are kept. Leak/keep numbers need reference stems from tests/bench_quality.py --build-refs, which no corpus on this machine currently has.",
+    "alignment_check": "Best offset 0 hops at -10.2 dB against +3.3 to +3.7 dB for every neighbour within 4 hops, confirming the streaming window maths is right and the ESR figures are quality, not misalignment."
+  },
+  "notes": "Non-causal by construction: a bidirectional LSTM reads a whole chunk before deciding anything, so unlike StemgenRT this cannot be made block-synchronous at any price -- the delay is the model. The chunk is therefore part of the config name (mrx_2000ms etc., MRX_CHUNKS_MS), as it is for Spleeter. Choosing mrx at all costs the latency; the keep-effects switch itself only adds one iSTFT per resolution, about 6% of a window. Input is level-sensitive (the offline repo normalises whole files to -27 LUFS before calling it), so processors/mrx.py keeps a slow running loudness estimate as a stopgap until ROADMAP B10 lands.",
+  "effects_stem_leakage": {
+    "what": "Energy of the effects stem relative to the dialogue stem, measured through the shipped processor at the 2000 ms default on material containing NO sound effects -- so every bit of it is leakage, mostly music.",
+    "corpus": "4 male-lead music+vocal clips, ~/.local/state/music-assassin/bench/b3/audio_male/*a100_input.wav, 2026-10-27",
+    "raw_db": -6.2,
+    "over_subtracted_db": -10.6,
+    "improvement_db": -4.4,
+    "per_clip_improvement_db": [
+      -6.6,
+      -4.3,
+      -3.8,
+      -2.8
+    ],
+    "worst_clip_cleaned_db": -0.7,
+    "reading": "Over-subtraction helps consistently and by about what the offline repo gets from its own separate-STFT implementation (-16.4 -> -21.3 dB, i.e. -4.9 dB), which cross-validates doing it in the mask domain instead. But on music with sung vocals the cleaned effects stem is still mostly leaked music, and at parity with dialogue on the worst clip.",
+    "why": "MRX is trained on DnR -- film speech, score and foley. Music with sung vocals over a band mix is out of distribution. The offline repo's -21.3 dB is on cinematic content, which is what this model is for and where the maintainer preferred it by ear.",
+    "so": "Keep the switch on for film and TV; expect it to add music back on music with singing. A property of the model, not of the wrapper."
+  },
+  "post_processing": "Over-subtraction of the music stem from the effects stem, on by default (CLEAN_BETA 1.0, CLEAN_FLOOR 0.05), matching the offline repo's clean_effects() defaults for MRX. Applied per bin in the model's own three STFT domains rather than a separate 2048/512 analysis, so it costs two multiplies per bin and no extra transform."
+}

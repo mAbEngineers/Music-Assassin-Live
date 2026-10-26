@@ -94,6 +94,47 @@ reported failure was audio stopping after the output was changed behind the
 app's back. Old `output_name` entries in settings.json are ignored.
 `test_routing_dry` needs the app closed to run.
 
+## Keep sound effects, live (2026-10-27)
+
+There is now a **"Keep sound effects" switch** on the Processing card, and a
+model behind it that can honour it: **MRX** (MERL cocktail-fork, int8 ONNX,
+MIT, 31 MB), the first three-way dialogue/music/effects separator here.
+`scripts/fetch_mrx.py` installs it; `processors/mrx.py` runs it;
+`models/mrx.json` holds every number below.
+
+Why a model and not a knob: every other processor emits one scalar per bin
+saying how speech-like it is, and drums and effects are adjacent in that one
+ranking, so no monotonic post-processing of it can keep one and drop the
+other (`IDEAS.md` 1.1). A separate effects mask is a second axis.
+
+- **Cost.** RTF ~0.10 on one thread (83 ms of CPU per second of audio, flat
+  from 1 s to 8 s chunks). Choosing `mrx` costs **1805 ms of latency** at the
+  2000 ms default; the switch itself only adds one iSTFT per resolution,
+  about 6 % of a window. MRX replaces `dpdfnet_hr` rather than running
+  beside it, since one pass yields both stems.
+- **The chunk is the latency and the quality.** Error against a full 30 s
+  pass falls about 3 dB per doubling, and the effects stem trails the
+  dialogue stem by 3–5 dB throughout. Nothing inside a live budget
+  reproduces the 30 s result. 2000 ms is the shortest chunk whose effects
+  stem errs by less than its own energy, which is why it is the default.
+- **The real limit is the training domain, not the plumbing.** MRX is
+  trained on DnR: film speech, score, foley. On 4 b3 male-lead clips with
+  **no effects in them at all**, the effects stem came out at −6.2 dB
+  relative to dialogue raw and −10.6 dB after over-subtraction, and −0.7 dB
+  on the worst clip. All of it is leaked music. Offline, on cinematic
+  content, the same model measures −21.3 dB.
+  **So: on for film and TV, off for music with singing.**
+- **Over-subtraction** of the music stem from the effects stem is on by
+  default, as it is offline. Done in the model's own three STFT domains
+  instead of a separate analysis: −4.4 dB on these clips against the offline
+  implementation's −4.9 dB, which cross-validates the shorter route.
+- **Not bundled in the .deb.** DnR's component-corpus terms are unchecked —
+  the same open question as StemgenRT's, and it must be settled first.
+- Tests: `tests/test_mrx.py` (windows, count alignment, that the switch
+  changes the audio by adding a stem rather than rescaling) and
+  `tests/test_cstft.py` (the torch-free STFT against torch, because MRX's
+  int8 graph depends on the `normalized=True` scale).
+
 ## Next, in order
 
 1. **Stemgen ships as is** (user decision 2026-10-24): selectable in the picker,
@@ -115,8 +156,12 @@ app's back. Old `output_name` entries in settings.json are ignored.
    Chromium) before building anything that needs it. This machine runs
    PipeWire 1.0.5, so declaring latency would need a native `pw_filter`.
    Loopback `ProcessLatency` needs 1.4 or later.
-5. **Sound effects:** `LIVE_SFX_HANDOVER.md` §4 ranks the routes. The
-   cheapest is a music-presence gate.
+5. **Sound effects:** the MRX route is built (above). What is left is a
+   listen on real cinematic content — every number here is from music
+   clips, which is MRX's worst case — and a decision about whether 1805 ms
+   is acceptable, which is item 4. `LIVE_SFX_HANDOVER.md` §4 still ranks the
+   cheaper routes; a music-presence gate remains the only one that costs no
+   latency.
 6. Tag 0.1.4 once B10 or a StemgenRT default removes the suppression
    blocker.
 

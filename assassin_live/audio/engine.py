@@ -130,6 +130,12 @@ class AudioEngine:
         self._lock = threading.Lock()
         self._running = False
         self._wet_target = 1.0   # mix intensity: 1 = fully processed, 0 = fully original
+        # Add a three-way separator's effects stem back alongside dialogue.
+        # Unlike stereo/midside/bandlimit this defaults ON, because the only
+        # processor that can honour it (processors/mrx.py) is not worth its
+        # latency without it -- MRX with effects off is a slower, blurrier
+        # speech enhancer than dpdfnet_hr. Every other model ignores it.
+        self._keep_effects = True
         self._wet_gain = 0.0     # current interpolated mix (ramped, click-free)
         self._dry_volume = 1.0   # original-signal gain
         self._wet_volume = 1.0   # processed-signal gain
@@ -217,6 +223,9 @@ class AudioEngine:
         # Sized from the installed processor -- see _apply_caps().
         self._max_out = BLOCK * BASE_FIFO_BLOCKS
         self._apply_caps()
+        # The processor has its own default; make the engine's flag win from
+        # the first block so the two cannot disagree before the UI speaks.
+        self._apply_keep_effects()
 
     def _apply_caps(self) -> None:
         """Size the FIFO caps and the input queue for the installed processor.
@@ -300,8 +309,36 @@ class AudioEngine:
             self._runtime = self._build_runtime(processor)
             self._apply_caps()
             self._apply_atten_limit()
+            self._apply_keep_effects()
             return
         self._pending_runtime = processor
+
+    def set_keep_effects(self, enabled: bool) -> None:
+        """Keep sound effects as well as dialogue, where the model can.
+
+        Duck-typed like set_atten_limit: a processor opts in by defining
+        set_keep_effects, and the rest silently ignore the setting rather
+        than the engine keeping a list of which models support what. The
+        flag is remembered either way, so switching to MRX and back does
+        not lose it.
+
+        This does NOT change the processor's latency -- MRX reads the same
+        chunk whichever stems it synthesises -- so no cap resize is needed
+        and the switch is safe to flip mid-stream."""
+        self._keep_effects = bool(enabled)
+        self._apply_keep_effects()
+
+    def _apply_keep_effects(self) -> None:
+        setter = getattr(self.proc, "set_keep_effects", None)
+        if setter:
+            setter(self._keep_effects)
+
+    @property
+    def keep_effects_supported(self) -> bool:
+        """Whether the installed processor has an effects stem to keep, so
+        the UI can enable its switch for MRX and explain itself for the
+        rest rather than offering a control that does nothing."""
+        return bool(getattr(self.proc, "keeps_effects", False))
 
     def set_atten_limit(self, db: float) -> None:
         """How far any bin may be pulled down, in dB; 0 = no limit.
@@ -815,6 +852,7 @@ class AudioEngine:
         self._runtime = self._build_runtime(processor)
         self._apply_caps()
         self._apply_atten_limit()
+        self._apply_keep_effects()
         self._warm_up()
         # worker-owned DSP state, all of it specific to the model that just
         # left: stateful IIRs, the mid/side downmix, the rebuild's history.

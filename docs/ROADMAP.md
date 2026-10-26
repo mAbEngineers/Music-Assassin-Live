@@ -586,6 +586,39 @@ today's latency. What does carry over:
 
 Read its §6 before re-opening any SFX mechanism.
 
+**Route 3 is built, 2026-10-27 — and it does not unpark A4 either.** MRX now
+runs live (`processors/mrx.py`, `models/mrx.json`) behind a "Keep sound
+effects" switch, as `mrx` / `mrx_<n>ms`. Compute turned out not to be the
+obstacle: RTF ~0.10 on one thread, and one pass yields both stems, so it
+replaces `dpdfnet_hr` rather than running beside it. Two things were measured
+that matter more than the plumbing:
+
+- **The chunk is both the latency and the quality.** Error against a full 30 s
+  pass falls about 3 dB per doubling, and the effects stem trails the dialogue
+  stem by 3–5 dB at every chunk: dialogue −1.8/−4.7/−6.2/−9.5/−13.0 dB and
+  effects +4.6/+2.4/−1.1/−5.2/−8.1 dB at 500/1000/2000/4000/8000 ms. A
+  positive figure means the error exceeds the reference's own energy. So
+  **nothing inside a live latency budget reproduces the 30 s result** this
+  section's offline numbers come from. The default is 2000 ms — 1805 ms of
+  latency — being the shortest chunk where the effects stem errs by less than
+  its own energy. This retires the "≥ 1.1 s" figure quoted from the A1
+  Spleeter spike: it was never MRX's number.
+
+- **The binding limit is MRX's training domain.** It is trained on DnR — film
+  speech, score, foley. On 4 b3 male-lead clips, which contain no sound
+  effects at all, so every bit of the effects stem is leakage: −6.2 dB
+  relative to dialogue raw, −10.6 dB after over-subtraction, −0.7 dB on the
+  worst clip. Against −21.3 dB on cinematic content above. **On for film and
+  TV, off for music with singing.** A4's premise — a model whose taxonomy
+  separates effects from music — is satisfied in the cinematic domain and not
+  in the musical one, which is the domain this app is mostly used in.
+
+Over-subtraction is on by default live as it is offline, applied in the
+model's own three STFT domains rather than a separate 2048/512 analysis:
+−4.4 dB on these clips against the offline implementation's −4.9 dB, which
+cross-validates the shorter route. Q3 and the latency-reporting question are
+unchanged and still gate whether 1805 ms is usable at all.
+
 ### A5. Seed DPDFNet state from its ONNX normalization metadata ✅ done
 
 The defect behind §2.1. `processors/dpdfnet.py` starts the model state from

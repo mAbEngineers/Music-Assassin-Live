@@ -1026,6 +1026,77 @@ come from `Music-Assassin/models/sherpa_onnx/sherpa-onnx-spleeter-2stems-int8/`
 (2 × 26 MB — note the `sherpa_onnx/` path component); `scripts/import_models.py`
 now copies them in under the names the registry looks up.
 
+## What landed 2026-10-27 — "keep sound effects" live, and what it costs
+
+Asked for a switch to choose whether to preserve sound effects. There was no
+mechanism for one to drive: the app had no effects path at all, and the two
+grep hits for "effects" in `assassin_live/` were comments naming Easy
+Effects as a competitor. The options were put to the user, who chose the
+full MRX path over the three cheaper stand-ins.
+
+**What shipped.** MRX (MERL cocktail-fork, int8 ONNX, MIT, 31 MB) as
+`processors/mrx.py`, a torch-free chunk STFT as `processors/cstft.py`,
+`scripts/fetch_mrx.py`, `models/mrx.json`, `AudioEngine.set_keep_effects`,
+and a switch on the Processing card that greys out with a reason for
+pipelines that have no effects stem. `Switch` grew a disabled state.
+
+**Why a model rather than a knob.** This is the same wall as B4. Every other
+processor emits one scalar per bin saying how speech-like it is; drums and
+effects are adjacent in that one ranking, so no monotonic function of it
+separates them. A separate effects mask is a second axis. ROADMAP §11's
+2026-10-23 scope note already said the dead end was *pure-DSP* add-back and
+not add-back as such.
+
+**Three things measured, and only the first is comfortable.**
+
+- **Cost is fine.** RTF ~0.10 on one thread; 83 ms of CPU per second of
+  audio, flat from 1 s to 8 s chunks. One pass yields both stems, so MRX
+  replaces `dpdfnet_hr` rather than running beside it. An early reading of
+  0.33 was onnxruntime shape-planning amortised over 6 s of audio, not
+  steady state — worth knowing before anyone re-measures and panics.
+
+- **The chunk is both the latency and the quality.** Error against a full
+  30 s pass falls about 3 dB per doubling, and the effects stem trails the
+  dialogue stem by 3–5 dB at every chunk. **Nothing inside a live latency
+  budget reproduces the 30 s result** the offline app ships. At 500 and
+  1000 ms the effects stem's error exceeds its own energy. The default is
+  2000 ms — 1805 ms of latency — as the shortest chunk where it does not.
+  This retires the "≥ 1.1 s" figure we had been quoting from the Spleeter
+  spike; it was never MRX's number.
+
+- **The real limit is the training domain, not the plumbing.** MRX is
+  trained on DnR: film speech, score, foley. On 4 b3 male-lead clips, which
+  contain **no sound effects at all**, so every bit of the effects stem is
+  leakage: −6.2 dB relative to dialogue raw, −10.6 dB after
+  over-subtraction, and −0.7 dB on the worst clip. Offline on cinematic
+  content the same model measures −21.3 dB. **On for film and TV, off for
+  music with singing.** No amount of wrapper work changes this.
+
+**One parity gap found and closed.** The offline path applies
+`clean_effects()` over-subtraction by default for MRX and the first cut here
+did not. Doing it in the model's own three STFT domains instead of a
+separate 2048/512 analysis costs two multiplies per bin and no extra
+transform, and gives −4.4 dB against the offline implementation's −4.9 dB,
+which cross-validates the shorter route.
+
+**What was verified rather than assumed.**
+- `cstft` against torch itself, 9 length/window combinations, ~2e-7
+  relative. MRX's weights are int8, so `normalized=True`'s `1/sqrt(n_fft)`
+  is not a detail: getting it wrong feeds the quantised graph magnitudes it
+  was never calibrated for, and a round-trip test would not notice.
+- Count alignment by searching offsets either side of 0 and insisting 0
+  wins: it does, by 42 dB. The engine's positional dry/wet pairing depends
+  on this, and a one-hop slip is an echo at anything under 100 % mix.
+- `Switch.set_enabled` under `xvfb-run` — ignores clicks, keeps its value,
+  draws in all four enabled/value combinations. NOT added to
+  `scripts/run_tests.sh`, which is display-free by design.
+
+**Still open.** Every number above is from music clips, which is MRX's worst
+case; it wants a listen on real cinematic content. Whether 1805 ms is
+acceptable is the latency-reporting question (CURRENT_STATE item 4), still
+untested. Not bundled in the .deb: DnR's component-corpus terms are
+unchecked, the same question as StemgenRT's.
+
 ## What landed 2026-10-22
 
 All uncommitted on `feat/separator-spike`. This is the three-step plan from

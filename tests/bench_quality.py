@@ -1613,8 +1613,9 @@ def main() -> int:
     mdir = models_dir()
     configs = parse_sweep(args.sweep)
     have = processors.available(mdir)
-    # is_available(), not `in have`: the spleeter chunk variants are a sweep
-    # axis and are not enumerated by available() (see processors/__init__.py).
+    # is_available(), not `in have`: the spleeter and mrx chunk variants are
+    # a sweep axis and are not enumerated by available() (see
+    # processors/__init__.py).
     missing = {c["model"] for c in configs
                if not processors.is_available(c["model"], mdir)}
     if missing:
@@ -1622,7 +1623,9 @@ def main() -> int:
               f"available: {', '.join(have)}"
               f" (plus spleeter_<n>ms for n in "
               f"{', '.join(str(m) for m in processors.SPLEETER_CHUNKS_MS)}"
-              f" when spleeter is installed)")
+              f" when spleeter is installed, and mrx_<n>ms for n in "
+              f"{', '.join(str(m) for m in processors.MRX_CHUNKS_MS)}"
+              f" when mrx is installed)")
         return 1
 
     cats = sorted({e.get("category", "general") for e in entries})

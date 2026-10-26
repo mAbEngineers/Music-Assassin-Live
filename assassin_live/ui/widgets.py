@@ -243,15 +243,30 @@ class Switch(tk.Canvas):
         self.knob_off, self.knob_on = knob_off, knob_on
         self.value = bool(value)
         self.command = command
+        self.enabled = True
         self._pos = 1.0 if self.value else 0.0
         self._anim = None
         self.bind("<Button-1>", self._on_click)
         self._draw()
 
+    def set_enabled(self, enabled: bool):
+        """Grey out and stop responding, for a setting the selected model
+        cannot honour. The value is kept, not cleared: re-enabling restores
+        what the user last chose rather than silently resetting it."""
+        enabled = bool(enabled)
+        if enabled == self.enabled:
+            return
+        self.enabled = enabled
+        self.configure(cursor="hand2" if enabled else "")
+        self._draw()
+
     def _draw(self):
         self.delete("all")
         on = self._pos > 0.5
-        track = self.accent if on else self.track
+        # Disabled draws in the off colours whatever the value, so a switch
+        # that cannot act never shows the accent that means "this is doing
+        # something". The caller greys the label beside it.
+        track = self.accent if (on and self.enabled) else self.track
         self.create_image(0, 0, anchor="nw", image=aa_shape(
             self, self.w, self.h, bg=self.bg_colour, fill=track))
         # The knob's own edge is blended against the track it sits on, not
@@ -260,9 +275,12 @@ class Switch(tk.Canvas):
         cx = self.h / 2 + (self.w - self.h) * self._pos
         self.create_image(cx - knob / 2, (self.h - knob) / 2, anchor="nw",
                           image=aa_disc(self, knob, bg=track,
-                                        fill=self.knob_on if on else self.knob_off))
+                                        fill=self.knob_on if (on and self.enabled)
+                                        else self.knob_off))
 
     def _on_click(self, _evt=None):
+        if not self.enabled:
+            return
         self.set(not self.value)
         if self.command:
             self.command(self.value)

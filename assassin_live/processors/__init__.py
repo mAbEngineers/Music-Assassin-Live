@@ -16,6 +16,9 @@ _MODEL_FILES = {
     "stemgen": "stemgen_rt_vocals.onnx",
     "spleeter": ("spleeter_vocals.int8.onnx",
                  "spleeter_accompaniment.int8.onnx"),
+    # The only three-way dialogue/music/effects model here, and so the only
+    # one that can honour set_keep_effects (processors/mrx.py).
+    "mrx": "mrx.int8.onnx",
 }
 
 # Spleeter is chunk-parameterised: `spleeter_1000ms` is the same two ONNX
@@ -30,21 +33,48 @@ SPLEETER_CHUNKS_MS = (250, 500, 1000, 2000, 4000)
 _SPLEETER_DEFAULT_MS = 1000
 
 
-def _spleeter_chunk_ms(name: str) -> int | None:
-    """-> chunk in ms for a spleeter config name, or None if not one."""
-    if name == "spleeter":
-        return _SPLEETER_DEFAULT_MS
-    if not name.startswith("spleeter_") or not name.endswith("ms"):
+# MRX is chunk-parameterised for the same reason Spleeter is, and more
+# sharply: it is a bidirectional LSTM, so the chunk is both the latency and
+# the quality. Measured on 3 male-lead clips against a full 30 s pass, error
+# against that reference falls roughly 3 dB per doubling and the effects stem
+# trails the dialogue stem by 3-5 dB throughout (models/mrx.json
+# "chunk_sweep"). 2000 ms is the default because it is the shortest chunk
+# whose effects stem errs by less than its own energy.
+MRX_CHUNKS_MS = (500, 1000, 2000, 4000, 8000)
+_MRX_DEFAULT_MS = 2000
+# Discarded margin at each end of a chunk, as a fraction of it: the masks
+# either side of a boundary disagree, so the edges are computed and thrown
+# away. 10% costs 1.25x the compute (chunk / (chunk - 2*edge)).
+MRX_EDGE_FRAC = 0.1
+
+
+def _chunk_ms(name: str, base: str, default_ms: int) -> int | None:
+    """-> chunk in ms for a `<base>` or `<base>_<n>ms` config name, else None."""
+    if name == base:
+        return default_ms
+    if not name.startswith(f"{base}_") or not name.endswith("ms"):
         return None
-    body = name[len("spleeter_"):-len("ms")]
+    body = name[len(base) + 1:-len("ms")]
     if not body.isdigit() or int(body) <= 0:
         return None
     return int(body)
 
 
+def _spleeter_chunk_ms(name: str) -> int | None:
+    """-> chunk in ms for a spleeter config name, or None if not one."""
+    return _chunk_ms(name, "spleeter", _SPLEETER_DEFAULT_MS)
+
+
+def _mrx_chunk_ms(name: str) -> int | None:
+    """-> chunk in ms for an mrx config name, or None if not one."""
+    return _chunk_ms(name, "mrx", _MRX_DEFAULT_MS)
+
+
 def _files_for(name: str) -> tuple[str, ...]:
     if _spleeter_chunk_ms(name) is not None:
         name = "spleeter"
+    elif _mrx_chunk_ms(name) is not None:
+        name = "mrx"
     f = _MODEL_FILES.get(name)
     if f is None:
         return ()
@@ -88,10 +118,22 @@ def is_available(name: str, models_dir: Path) -> bool:
     which available() does not enumerate."""
     if name in available(models_dir):
         return True
+    if _mrx_chunk_ms(name) is not None:
+        return all((models_dir / f).is_file() for f in _files_for(name))
     if _spleeter_chunk_ms(name) is None:
         return False
     return (all((models_dir / f).is_file() for f in _files_for(name))
             and _have_sherpa())
+
+
+def keeps_effects(name: str) -> bool:
+    """Whether `name` has an effects stem to keep -- i.e. whether
+    AudioEngine.set_keep_effects does anything for it.
+
+    Answered from the name alone so the UI can enable or explain its switch
+    before any processor exists, with no stream running.
+    """
+    return _mrx_chunk_ms(name) is not None
 
 
 def create(name: str, models_dir: Path) -> StreamProcessor:
@@ -129,5 +171,12 @@ def create(name: str, models_dir: Path) -> StreamProcessor:
     if name == "stemgen":
         from .stemgen import StemgenProcessor
         return StemgenProcessor(str(paths[0]))
+    mrx_ms = _mrx_chunk_ms(name)
+    if mrx_ms is not None:
+        from .mrx import MrxProcessor
+        proc = MrxProcessor(str(paths[0]), chunk_ms=mrx_ms,
+                            edge_ms=mrx_ms * MRX_EDGE_FRAC)
+        proc.name = name
+        return proc
     from .speechdenoiser import SpeechDenoiserProcessor
     return SpeechDenoiserProcessor(str(paths[0]))

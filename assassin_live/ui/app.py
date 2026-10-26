@@ -109,6 +109,10 @@ class App:
         # restores contains audible music. Until someone listens, off.
         self.stereo_enabled = saved.get("stereo_enabled", False)
         self.bandlimit_enabled = saved.get("bandlimit_enabled", True)
+        # Defaults on, matching AudioEngine.set_keep_effects: the only
+        # pipeline that can honour it is not worth its latency without it.
+        # Harmless under every other model, which ignore the setting.
+        self.keep_effects_enabled = saved.get("keep_effects_enabled", True)
         self.atten_db = saved.get("atten_db", 0.0)
         self.smoothing_ms = saved.get("smoothing_ms", 0.0)
         self._initial_pipeline = saved.get("pipeline", "dpdfnet_hr")
@@ -170,6 +174,7 @@ class App:
         try:
             SETTINGS_FILE.write_text(json.dumps({
                 "pipeline": self.model.get(),
+                "keep_effects_enabled": self.keep_effects_enabled,
                 "mix_pct": self.mix_pct,
                 "mute_dry": self.mute_dry,
                 "mute_wet": self.mute_wet,
@@ -388,10 +393,24 @@ class App:
             self.midside_enabled, self._toggle_midside)
         self.bandlimit_sw = self._switch_row(
             inner, "Band-limit", "20 Hz – 20 kHz",
-            self.bandlimit_enabled, self._toggle_bandlimit, last=True)
+            self.bandlimit_enabled, self._toggle_bandlimit)
+        # Last, and the only switch here that some pipelines cannot honour:
+        # keeping effects needs a model with a separate effects stem, not a
+        # setting on a speech enhancer (see processors/mrx.py).
+        self.keep_sfx_sw, self.keep_sfx_sub = self._switch_row(
+            inner, "Keep sound effects",
+            "", self.keep_effects_enabled, self._toggle_keep_effects,
+            last=True, want_subtitle=True)
+        self._sync_keep_sfx()
         self._build_atten_row(inner)
 
-    def _switch_row(self, parent, title, subtitle, value, command, last=False):
+    def _switch_row(self, parent, title, subtitle, value, command, last=False,
+                    want_subtitle=False):
+        """-> the Switch, or (Switch, subtitle Label) with want_subtitle.
+
+        The subtitle is handed back only where the caller has to rewrite it
+        later; every other row's text is fixed at build time.
+        """
         row = tk.Frame(parent, bg=PANEL)
         row.pack(fill=tk.X, pady=self.px(5))
         sw = Switch(row, bg=PANEL, track=TRACK, accent=ON_COLOR, knob_off=KNOB,
@@ -402,11 +421,12 @@ class App:
         text.pack(side=tk.LEFT, anchor="w")
         tk.Label(text, text=title, font=self.f_body, bg=PANEL,
                  fg=TEXT).pack(anchor="w")
-        tk.Label(text, text=subtitle, font=self.f_sub, bg=PANEL,
-                 fg=SUBTEXT).pack(anchor="w")
+        sub = tk.Label(text, text=subtitle, font=self.f_sub, bg=PANEL,
+                       fg=SUBTEXT)
+        sub.pack(anchor="w")
         if not last:
             self._rule(parent)
-        return sw
+        return (sw, sub) if want_subtitle else sw
 
     def _build_atten_row(self, parent):
         """The two permissiveness controls (ROADMAP B4, C12), for every model.
@@ -656,6 +676,23 @@ class App:
         if self.engine:
             self.engine.set_bandlimit(self.bandlimit_enabled)
 
+    def _toggle_keep_effects(self, value):
+        self.keep_effects_enabled = bool(value)
+        if self.engine:
+            self.engine.set_keep_effects(self.keep_effects_enabled)
+
+    def _sync_keep_sfx(self):
+        """Enable the switch only for a pipeline that has an effects stem,
+        and say which way it is. Called on build and on every model change,
+        with or without a running engine."""
+        name = self.model.get()
+        ok = processors.keeps_effects(name)
+        self.keep_sfx_sw.set_enabled(ok)
+        self.keep_sfx_sub.configure(
+            text=("adds the model's effects stem back"
+                  if ok else f"needs an effects-stem pipeline; {name} has none"),
+            fg=SUBTEXT if ok else FAINT)
+
     def _compare(self, held: bool):
         """Hold-to-compare: drop to the original while the button is down.
 
@@ -668,6 +705,9 @@ class App:
 
     # -- pipeline / output pickers (live-switchable) -----------------------------
     def _on_model_change(self, _evt=None):
+        # Before the engine check: the switch must tell the truth about the
+        # selected pipeline whether or not a stream is running.
+        self._sync_keep_sfx()
         if not (self.enabled and self.engine):
             return
         try:
@@ -752,6 +792,7 @@ class App:
             engine.set_stereo(self.stereo_enabled)
             engine.set_atten_limit(self.atten_db)
             engine.set_smoothing(self.smoothing_ms)
+            engine.set_keep_effects(self.keep_effects_enabled)
             engine.start(self.routing.monitor_source, real.name)
             self.routing.adopt_volume()
             self._result = ("on", engine, real)

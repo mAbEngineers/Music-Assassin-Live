@@ -56,9 +56,16 @@ echo "== needs the ONNX models =="
 # dependency (ROADMAP A1, processors/spleeter.py) -- so it skips on this
 # venv and runs on the research one. Both report NOTHING TESTED rather than
 # passing empty, which is what the SKIPPED branch keys on.
+#
+# test_cstft is here for the same reason and not because it needs models: its
+# pure-numpy half always runs, but the half that matters -- that the STFT
+# scale matches torch's, which MRX's int8 graph depends on -- needs torch,
+# which is likewise not an app dependency.
 MODEL_TESTS=(
   test_processors_offline   # every installed processor's feed() contract
   test_spleeter_chunking    # A1's separator wrapper: quantum, edges, lag
+  test_cstft                # torch-free STFT vs torch (MRX's input scale)
+  test_mrx                  # MRX windows, count alignment, keep-effects switch
 )
 for t in "${MODEL_TESTS[@]}"; do
   printf '  %-26s ' "$t"
