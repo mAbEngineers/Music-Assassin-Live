@@ -74,6 +74,15 @@ BASE_FIFO_BLOCKS = 8
 QUIET_RMS = 10 ** (-60 / 20)
 QUIET_BLOCKS = 3             # 60 ms of quiet before the trim is allowed
 BACKLOG_SLACK = BLOCK        # standing backlog tolerated before a trim is worth it
+# The same stall while sound is playing cannot wait for quiet. When the
+# standing backlog has stayed above STANDING_LIMIT for STANDING_RUN blocks it
+# is skipped over once, cut back to STANDING_KEEP, through a short
+# crossfade so it is a jump in time and not a click. The healthy standing
+# backlog measured on the reporter's machine is 40-80 ms, hence the margin.
+STANDING_LIMIT = 5 * BLOCK
+STANDING_KEEP = 2 * BLOCK
+STANDING_RUN = 20            # 400 ms above the limit before acting
+SKIP_XFADE = 192             # 4 ms
 CHUNKED_BLOCKS = 4           # a processor holding more than this answers in chunks
 
 LIMITER_THRESHOLD = 0.8  # below this, output passes through untouched
@@ -105,7 +114,9 @@ class EngineStats:
         self.worker_ms_avg = 0.0
         self.xruns = 0
         self.callback_errors = 0   # exception in _callback -> would silently kill the stream
-        self.backlog_trimmed = 0   # samples dropped once to correct a startup stall
+        self.backlog_trimmed = 0   # samples dropped to remove a stall's standing delay
+        self.skips = 0             # of which this many crossfaded skips during sound
+        self.peak_backlog = 0      # largest processed backlog seen, samples
 
 
 class AudioEngine:
@@ -210,6 +221,8 @@ class AudioEngine:
         # Dry dropped by the callback at its cap -> the matching wet has not
         # been produced yet, so the callback skips that much of it later.
         self._quiet_run = 0      # consecutive quiet input blocks, callback-only
+        self._standing_run = 0   # consecutive blocks above STANDING_LIMIT
+        self._pending_skip = 0   # samples to skip at the next callback
         self._dry_drop = 0       # written by worker, consumed by callback
         self._wet_skip = 0       # callback-thread-only
 
@@ -726,6 +739,9 @@ class AudioEngine:
             # dry FIFO never gets ahead of what wet will actually produce
 
         with self._lock:
+            if self._pending_skip:
+                self._skip_ahead(self._pending_skip)
+                self._pending_skip = 0
             drop, self._dry_drop = self._dry_drop, 0
             # Both caps can fire over one stall, and then they name the SAME
             # samples: the oldest wet the worker trimmed is exactly the wet
@@ -769,6 +785,7 @@ class AudioEngine:
         # filled by another thread, so any single reading jitters by up to a
         # block.
         self._trim_standing_backlog(indata)
+        self._watch_standing_backlog()
         self._lag_ema = 0.9 * self._lag_ema + 0.1 * len(self._dry_out)
 
         wet = np.empty_like(dry)
@@ -793,6 +810,45 @@ class AudioEngine:
         outdata[:] = _soft_limit(mixed) if wet_g > 1.0 else mixed
         self._levels.append(float(np.sqrt(np.mean(np.square(outdata)))))
         self._levels_in.append(float(np.sqrt(np.mean(np.square(indata)))))
+
+    def _skip_ahead(self, cut: int) -> None:
+        """Callback thread, with self._lock held. Drop `cut` samples from the
+        head of both FIFOs, crossfading from the old head into the audio that
+        follows the cut so the join does not click.
+
+        Both FIFOs lose the same count from their heads, so the pairing is
+        untouched. Does nothing if either is too short to crossfade.
+        """
+        need = cut + SKIP_XFADE
+        if len(self._out) < need or len(self._dry_out) < need or self._wet_skip:
+            return
+        fade = np.linspace(0.0, 1.0, SKIP_XFADE, dtype=np.float32)[:, None]
+
+        def join(a: np.ndarray) -> np.ndarray:
+            head = a[:SKIP_XFADE] * (1.0 - fade) + a[cut:need] * fade
+            return np.concatenate([head, a[need:]])
+        self._out = join(self._out)
+        self._dry_out = join(self._dry_out)
+        self.stats.backlog_trimmed += cut
+        self.stats.skips += 1
+
+    def _watch_standing_backlog(self) -> None:
+        """Callback thread. Ask for a skip when the processed backlog has sat
+        above the limit for a while. The skip itself happens at the start of
+        the next callback (_skip_ahead)."""
+        n = len(self._out)
+        if n > self.stats.peak_backlog:
+            self.stats.peak_backlog = n
+        if self.proc.latency_samples > CHUNKED_BLOCKS * BLOCK:
+            self._standing_run = 0
+            return
+        if n >= STANDING_LIMIT:
+            self._standing_run += 1
+            if self._standing_run >= STANDING_RUN:
+                self._pending_skip = n - STANDING_KEEP
+                self._standing_run = 0
+        else:
+            self._standing_run = 0
 
     def _trim_standing_backlog(self, indata: np.ndarray) -> None:
         """Callback thread. Cut the processed audio still queued after this

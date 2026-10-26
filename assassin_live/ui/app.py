@@ -1212,7 +1212,10 @@ class App:
                         ("output", self._level_db(self.engine.recent_levels())),
                         ("blocks", s.blocks_in),
                         ("fallbacks", s.fallback_blocks),
-                        ("xruns", s.xruns))))
+                        ("xruns", s.xruns),
+                        ("peak backlog", f"{s.peak_backlog / 48:.0f} ms"),
+                        ("trimmed", f"{s.backlog_trimmed / 48:.0f} ms"
+                                    f"  ({s.skips} skips)"))))
         elif not self.enabled and not self._holding():
             self._say("idle", hold=False)
             self.details.config(text="")

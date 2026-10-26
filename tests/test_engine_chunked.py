@@ -279,16 +279,16 @@ def test_a_stall_is_trimmed_in_quiet_and_not_before():
     seen = {}
     for i, blk in enumerate(x):
         eng._callback(blk, out[i], BLOCK, None, None)
-        if not (40 <= i < 45):                # the worker stalls for five blocks
+        if not (40 <= i < 43):                # three blocks: under the skip limit
             while not eng._in_q.empty():
                 eng._process_block(eng._in_q.get_nowait())
         if i in (39, 100, 118, 160):
             seen[i] = len(eng._out) / BLOCK
     eng._running = False
-    check("a stall of five blocks leaves them queued, as before",
-          seen[100] >= 5, f"{seen[100]:.1f} blocks standing at block 100")
-    check("while there is sound the delay is left alone",
-          seen[118] >= 5, f"{seen[118]:.1f} blocks at 118")
+    check("a stall of three blocks leaves them queued, as before",
+          seen[100] >= 3.5, f"{seen[100]:.1f} blocks standing at block 100")
+    check("while there is sound a small delay is left alone",
+          seen[118] >= 3.5, f"{seen[118]:.1f} blocks at 118")
     check("after the quiet stretch only about one block is left",
           seen[160] <= 1.0, f"{seen[160]:.1f} blocks at 160")
     check("and the trim was counted", eng.stats.backlog_trimmed > 0,
@@ -297,6 +297,49 @@ def test_a_stall_is_trimmed_in_quiet_and_not_before():
     resid = float(np.sqrt(np.mean(y ** 2)))
     check("wet and dry are still paired after it (50/50 cancels)",
           resid < 1e-5, f"residual RMS {resid:.2e} (input 1e-1)")
+
+
+def test_a_stall_during_sound_is_skipped_once():
+    print("\nworker stall while sound is playing: skipped once, pairing kept")
+    rng = np.random.default_rng(4)
+    n = 300
+    mono = (0.1 * rng.standard_normal((n, BLOCK, 1))).astype(np.float32)
+    x = np.repeat(mono, 2, axis=2)            # no silence anywhere
+    eng = AudioEngine(MonoNegate())
+    eng._mask_lag = 0
+    eng._running = True
+    eng._wet_target = eng._wet_gain = 0.5
+    eng.set_bandlimit(False)
+    out = np.zeros_like(x)
+    seen = {}
+    for i, blk in enumerate(x):
+        eng._callback(blk, out[i], BLOCK, None, None)
+        if not (40 <= i < 46):                # six blocks, 120 ms
+            while not eng._in_q.empty():
+                eng._process_block(eng._in_q.get_nowait())
+        if i in (39, 55, 150):
+            seen[i] = len(eng._out) / BLOCK
+    eng._running = False
+    check("the stall leaves a standing backlog", seen[55] >= 5,
+          f"{seen[55]:.1f} blocks at 55")
+    check("which is cut back while sound keeps playing", seen[150] <= 3.0,
+          f"{seen[150]:.1f} blocks at 150")
+    check("with exactly one skip", eng.stats.skips == 1, f"{eng.stats.skips}")
+    resid = float(np.sqrt(np.mean(out[100:] ** 2)))
+    check("wet and dry stay paired through the crossfade (50/50 cancels)",
+          resid < 1e-5, f"residual RMS {resid:.2e} (input 1e-1)")
+    steady = AudioEngine(MonoNegate())
+    steady._mask_lag = 0
+    steady._running = True
+    steady._wet_target = steady._wet_gain = 0.5
+    steady.set_bandlimit(False)
+    o2 = np.zeros_like(x)
+    for i, blk in enumerate(x):
+        steady._callback(blk, o2[i], BLOCK, None, None)
+        while not steady._in_q.empty():
+            steady._process_block(steady._in_q.get_nowait())
+    check("a healthy stream is never skipped", steady.stats.skips == 0,
+          f"{steady.stats.skips} skips")
 
 
 def main() -> int:
@@ -308,6 +351,7 @@ def main() -> int:
     test_shaper_toggle_keeps_lockstep()
     test_swap_straddling_a_callback_does_not_skew_the_pair()
     test_a_stall_is_trimmed_in_quiet_and_not_before()
+    test_a_stall_during_sound_is_skipped_once()
     print(f"\n{'FAIL' if FAILURES else 'PASS'}"
           + (f" — {len(FAILURES)}: {', '.join(FAILURES)}" if FAILURES else ""))
     return 1 if FAILURES else 0
