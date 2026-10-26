@@ -65,35 +65,34 @@ the previous default sink.
 
 Picking a model picks the lane: speech-enhancers (`gtcrn`, `dpdfnet`,
 `dtln`, `dpdfnet_hr`, `speechdenoiser`) run mono and can optionally rebuild
-a stereo image afterward; `stemgen` runs stereo throughout. Dashed boxes are
-off by default. Evolution of this diagram: `docs/PIPELINE_HISTORY.md`.
+a stereo image afterward; `stemgen` runs stereo throughout. Every model's
+output is also band-limited to 20 Hz-20 kHz (left off the diagram to keep
+it small). Dashed boxes are off by default. Evolution of this diagram:
+`docs/PIPELINE_HISTORY.md`.
 
 ```mermaid
 flowchart LR
-    TRAP(["Trap sink<br>.monitor source"]) --> PA["PortAudio duplex<br>20 ms callback"]
-    PA --> DRYFIFO(["dry FIFO<br>trimmed to match wet"])
-    PA -. mono model selected .-> DOWN["downmix<br>L+R → mono"]
-    PA -. separator selected .-> FEED["StemgenRT<br>stereo in, ~6 ms"]
+    CAP(["PortAudio capture<br>trap sink, 20 ms"]) --> DRYFIFO(["dry FIFO"])
+    CAP -. mono .-> DOWN["downmix<br>L+R to mono"]
+    CAP -. separator .-> FEED["StemgenRT<br>stereo in, ~6 ms"]
 
-    subgraph MONO["Worker thread — mono speech-enhancement models"]
-        DOWN --> MS["mid/side prefilter<br>(optional)"]
-        MS --> MODEL["model<br>gtcrn · dpdfnet · dtln · dpdfnet_hr · speechdenoiser"]
-        MODEL --> BL1["band-limit<br>20 Hz – 20 kHz"]
-        BL1 --> SHAPE1["mask shaper<br>(optional)"]
-        SHAPE1 --> REBUILD["stereo rebuild<br>(optional, mask ≤ 1)"]
+    subgraph MONO["mono speech-enhancers"]
+        DOWN --> MS["mid/side prefilter"]
+        MS --> MODEL["model<br>5 enhancers"]
+        MODEL --> SHAPE1["mask shaper<br>floor + smoothing"]
+        SHAPE1 --> REBUILD["stereo rebuild"]
     end
 
-    subgraph STEREO["Worker thread — stereo separator"]
-        FEED --> BL2["band-limit<br>L and R"]
-        BL2 --> SHAPE2["mask shaper<br>(optional)"]
-        SHAPE2 --> LAG["lag align<br>pads dry to match"]
+    subgraph STEREO["stereo separator"]
+        FEED --> SHAPE2["mask shaper<br>floor + smoothing"]
+        SHAPE2 --> LAG["lag align"]
     end
 
-    REBUILD --> WETFIFO(["wet FIFO<br>capped by model latency"])
+    REBUILD --> WETFIFO(["wet FIFO"])
     LAG --> WETFIFO
-    WETFIFO -- wet --> MIX["mix dry / wet<br>ramp, 0–300% wet"]
+    WETFIFO -- wet --> MIX["mix dry / wet"]
     DRYFIFO -- dry --> MIX
-    MIX --> LIMIT["soft limiter<br>when wet > 100%"] --> OUT(["Real output sink"])
+    MIX --> OUT(["limiter + output"])
 
     classDef optional stroke-dasharray: 4 3
     class MS,SHAPE1,REBUILD,SHAPE2 optional
