@@ -84,6 +84,16 @@ got here: `docs/PIPELINE_HISTORY.md`.
   - `RESEARCH_PRIOR_ART.md`: prior art and a pipeline review.
   - `LIVE_SFX_HANDOVER.md`: sound-effects work from the offline app.
 
+## Output follows the system (2026-10-26)
+
+The Output dropdown and the saved `output_name` are gone. The app outputs to
+whatever the system's output is, and `routing.check()` follows it when it
+changes from outside (system menu, Bluetooth reconnect). Reason: a picker
+that can disagree with the system is a second source of truth, and the
+reported failure was audio stopping after the output was changed behind the
+app's back. Old `output_name` entries in settings.json are ignored.
+`test_routing_dry` needs the app closed to run.
+
 ## Next, in order
 
 1. **Stemgen ships as is** (user decision 2026-10-24): selectable in the picker,

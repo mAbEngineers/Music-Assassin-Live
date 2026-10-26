@@ -1,7 +1,8 @@
 """Layer 4 — control panel: on/off, a single Original/De-Musiced mix fader
 (with independent mute for each side), live input and output meters, and
-pipeline / output-device pickers. Every control is live — changing pipeline,
-output device, the mix, or mute while the engine is running takes effect
+a pipeline picker. There is no output picker: the output is whatever the
+system's output is, and follows it when it changes. Every control is live —
+changing pipeline, the mix, or mute while the engine is running takes effect
 immediately, no need to stop first.
 
 tkinter only (stdlib, no extra weight); the widgets ttk cannot draw are in
@@ -36,7 +37,7 @@ from pathlib import Path
 from tkinter import messagebox
 
 from ..audio.engine import AudioEngine
-from ..audio.routing import RoutingSession, list_sinks, SINK_NAME
+from ..audio.routing import RoutingSession
 from ..paths import models_dir, SETTINGS_FILE
 from .. import processors
 from .widgets import (Dropdown, HoldButton, HSlider, Meter, PillButton, Switch,
@@ -68,7 +69,7 @@ WIN_W, WIN_H = 680, 430
 HEADER_H, STATUS_H = 56, 30
 PAD, GAP, CARD_PAD = 16, 12, 13
 LEFT_W = 292
-DEVICES_H, SIGNAL_H = 114, 150
+DEVICES_H, SIGNAL_H = 79, 150
 METER_W, METER_H = 316, 100
 FADER_W = 300
 
@@ -97,7 +98,6 @@ class App:
     def __init__(self):
         saved = self._load_settings()
         self.routing = RoutingSession()
-        self.routing.preferred_name = saved.get("output_name")
         self.engine: AudioEngine | None = None
         self.mute_dry = saved.get("mute_dry", False)
         self.mute_wet = saved.get("mute_wet", False)
@@ -112,7 +112,6 @@ class App:
         self.atten_db = saved.get("atten_db", 0.0)
         self.smoothing_ms = saved.get("smoothing_ms", 0.0)
         self._initial_pipeline = saved.get("pipeline", "dpdfnet_hr")
-        self.output_map: dict[str, str] = {}
 
         self.root = tk.Tk()
         self.root.title("Music Assassin Live")
@@ -156,7 +155,6 @@ class App:
         self._busy = False
         self._result = None
         RoutingSession.recover_stale()
-        self._refresh_outputs()
         self.root.after(1000, self._tick)
         self.root.after(90, self._wave_tick)
 
@@ -172,7 +170,6 @@ class App:
         try:
             SETTINGS_FILE.write_text(json.dumps({
                 "pipeline": self.model.get(),
-                "output_name": self.routing.preferred_name,
                 "mix_pct": self.mix_pct,
                 "mute_dry": self.mute_dry,
                 "mute_wet": self.mute_wet,
@@ -360,9 +357,6 @@ class App:
         self.model = tk.StringVar(value=self._pick_default_model(names))
         self.model_dd = self._picker_row(inner, "Pipeline", self.model, names,
                                          self._on_model_change, top=9)
-        self.output_var = tk.StringVar()
-        self.output_dd = self._picker_row(inner, "Output", self.output_var, [],
-                                          self._on_output_change, top=7)
 
     def _picker_row(self, parent, label, variable, values, command, top):
         row = tk.Frame(parent, bg=PANEL)
@@ -683,68 +677,21 @@ class App:
             return
         self.engine.set_processor(proc)
 
-    def _refresh_outputs(self):
-        sinks = [s for s in list_sinks() if s.name != SINK_NAME]
-        labels = [s.description or s.name for s in sinks]
-        self.output_map = {(s.description or s.name): s.name for s in sinks}
-        self.output_dd.set_values(labels)
-        current = self.output_var.get()
-        if labels and current not in labels:
-            default_label = None
-            if self.routing.real:
-                default_label = self.routing.real.description or self.routing.real.name
-            elif self.routing.preferred_name:
-                # not enabled yet (no routing.real) — try the saved device
-                for s in sinks:
-                    if s.name == self.routing.preferred_name:
-                        default_label = s.description or s.name
-                        break
-            self.output_var.set(default_label if default_label in labels else labels[0])
-
-    def _switch_output(self, sink, remember: bool) -> str:
+    def _follow_output(self, sink) -> str:
         """Point the engine at `sink`, cheaply if possible.
 
-        The single route into an output change, whichever of the three ways
-        it was asked for (our dropdown, the system picker, a device
-        vanishing) — they differ only in whether the choice is worth
-        remembering and what to say about it, not in how the switch is made.
-
-        `remember=False` for a device that vanished: the user's saved choice
-        did not change, their hardware did, and persisting the fallback
-        would quietly lose the device they actually want whenever their
-        headphones sleep.
+        There is no output picker: the system's output is the only choice,
+        so this is reached only when the system changed it (or the device
+        vanished). Nothing is remembered; the next start follows whatever
+        the system has then.
         """
         self.routing.real = sink
-        if remember:
-            self.routing.preferred_name = sink.name
         label = sink.description or sink.name
-        # Keep the dropdown honest even when the change came from outside
-        # the app — a picker that disagrees with the system is C3's whole
-        # complaint. Setting the variable does not fire <<ComboboxSelected>>,
-        # so this cannot recurse back into _on_output_change.
-        if label in self.output_map:
-            self.output_var.set(label)
         if not (self.enabled and self.engine):
             return label
         if not self.engine.retarget_output(sink.name):
             self.engine.retarget(self.routing.monitor_source, sink.name)
         return label
-
-    def _on_output_change(self, _evt=None):
-        name = self.output_map.get(self.output_var.get())
-        if not name:
-            return
-        self.routing.preferred_name = name
-        sink = next((s for s in list_sinks() if s.name == name), None)
-        if sink is None:
-            return
-        try:
-            self._say(f"output → {self._switch_output(sink, True)}")
-        except Exception as e:  # noqa: BLE001 — a failed switch must not wedge
-            # the app in a state where the dropdown says one thing and the
-            # audio does another; drop to a clean off.
-            self._turn_off()
-            self._say(f"could not switch output, turned off: {e}", RED)
 
     # -- actions ---------------------------------------------------------------
     # Button states. Turning on creates the trap sink (polls the graph up to
@@ -1154,12 +1101,8 @@ class App:
                 # (C1), so there is nothing left to amortise — and say so,
                 # which is the feedback C3 says is missing.
                 chosen = event == "real_sink_changed"
-                # Before selecting it: a device that just appeared is not in
-                # the dropdown's list yet, and _switch_output only sets the
-                # variable to a label the list actually contains.
-                self._refresh_outputs()
                 try:
-                    label = self._switch_output(self.routing.real, remember=chosen)
+                    label = self._follow_output(self.routing.real)
                 except Exception as e:  # noqa: BLE001 — a broken stream must not
                     # wedge the app; drop back to a clean, known-off state
                     # instead of leaving the trap sink stuck as default with
@@ -1232,7 +1175,6 @@ class App:
         elif not self.enabled and not self._holding():
             self._say("idle", hold=False)
             self.details.config(text="")
-        self._refresh_outputs()
 
     def _quit(self):
         self._save_settings()

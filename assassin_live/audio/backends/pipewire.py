@@ -323,17 +323,9 @@ class PipeWireBackend:
     def __init__(self):
         self.trap: SinkInfo | None = None
         self.real: SinkInfo | None = None
-        self.preferred_name: str | None = None  # user-picked output sink, if any
         self._pending: SinkInfo | None = None
         self._pending_since: float = 0.0
         self._last_trap_volume: tuple | None = None
-
-    def _pick_real(self, fallback: SinkInfo | None) -> SinkInfo | None:
-        if self.preferred_name:
-            for s in list_sinks():
-                if s.name == self.preferred_name:
-                    return s
-        return fallback
 
     # -- crash recovery ----------------------------------------------------
     @staticmethod

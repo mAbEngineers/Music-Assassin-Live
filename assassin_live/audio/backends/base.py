@@ -35,7 +35,6 @@ class RoutingBackend(Protocol):
     vanished.
     """
 
-    preferred_name: str | None  # user-picked output device, if any
     real: SinkInfo | None       # the current real (non-trap) output device
 
     @staticmethod
