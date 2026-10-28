@@ -2,8 +2,9 @@
 
 > **New here? Start with `docs/CURRENT_STATE.md`** — one page on what is true now; this file is the full record.
 
-Updated 2026-08-20. **This file is deliberately short.** It covers only where
-things stand *right now* and what to do next. The plan, the reasoning, the
+Updated 2026-10-27. **This file is the running record**, newest sections
+first; it was once short and is no longer. It covers where things stand
+*right now* and what to do next. The plan, the reasoning, the
 measured findings and the list of dead ends all live in
 [`docs/ROADMAP.md`](docs/ROADMAP.md) — read that before re-deriving anything.
 
@@ -22,6 +23,23 @@ not cut.**
 `origin/main` is **still at `06f0ac8`** and no tags have moved — the last
 published release is **v0.1.3**. `main` itself has never been pushed, so the
 25 commits on it reach the remote only through the two feature branches.
+
+**Corrected 2026-10-27.** `main` and `origin/main` are both at `8df4f83`
+now, so the "25 commits unpushed" above is spent; `main` is 0.1.4 and still
+untagged. This branch is at `d4c18cb` — **65 commits ahead of `main`, 5
+ahead of its own remote** (`origin/feat/separator-spike` = `540b6bc`). The
+last published release is still **v0.1.3**. The working tree holds
+uncommitted work from a second session running in this tree at the same
+time, none of it accounted for below: `__version__` bumped to **0.1.5**; a
+redrawn icon (`scripts/draw_icon.py`, the PNGs under `ui/assets/` and
+`packaging/icons/`) with `StartupWMClass` in the `.desktop` file and a
+matching Tk `className` in `ui/app.py`; and a routing fix that follows a
+single pick in the system menu, which it confirms by how long ago the pick
+was made instead of waiting to see it a second time (`settling` in
+`audio/backends/pipewire.py`, a faster tick in `ui/app.py`, two new cases in
+`tests/test_routing_events.py`). The same `pipewire.py` also carries the
+`device.bus=bluetooth` change, held back on purpose (see the end of "What
+landed 2026-10-26/27").
 
 **CI ran for the first time and passed on both branches**, with no fix-up
 needed to the apt/pip step. Read what green means before trusting it: the
@@ -166,6 +184,10 @@ producing candidates to compare with it.
 > **Current order — revised 2026-10-23. The items below keep their numbers,
 > because other items cross-reference them, but the ordering and much of the
 > status is superseded by ROADMAP §9's "Current order" — read that first.**
+>
+> *(Correction, 2026-10-27: all of the 2026-10-22/23 work described here is
+> committed — see "What landed 2026-10-22". Read the rest of this
+> blockquote for what it says is still open, not for its commit status.)*
 >
 > A lot landed in the working tree on 2026-10-22/23 and **none of it is
 > committed**: the engine now sizes its FIFO caps from the processor's
@@ -1026,6 +1048,90 @@ come from `Music-Assassin/models/sherpa_onnx/sherpa-onnx-spleeter-2stems-int8/`
 (2 × 26 MB — note the `sherpa_onnx/` path component); `scripts/import_models.py`
 now copies them in under the names the registry looks up.
 
+## What landed 2026-10-26/27 — the delay a worker stall leaves behind
+
+The reported symptom was audio drifting out of sync during a session, with
+only a restart fixing it; then, during the MRX test run, "it suddenly
+glitches for a second and starts lagging". Three commits: `f8796d3`,
+`65c6c05`, and `d4c18cb`, the last of which sits on top of the MRX work
+below.
+
+**The mechanism.** When the worker thread stalls for k blocks the callback
+plays dry meanwhile. The worker then delivers all k at once — and the
+callback takes one block out per block in, so those k blocks stay queued for
+the rest of the session: k × 20 ms of standing delay that nothing drains. A
+5-block (100 ms) stall left 6 blocks standing where the healthy baseline is
+1. The panel on the user's recording read 43–80 ms of standing backlog,
+which fits.
+
+What stalls the worker: loading a model on the UI thread (the Pipeline
+dropdown), a sink waking up after a pause, heavy window redraws. What does
+**not**: smoothing, suppression limit, stereo, band-limit — each of those
+only sets a flag, which was worth ruling out because the user suspected
+them.
+
+**Three fixes, in the order they were found.**
+
+- `f8796d3` — **flush every queue in one step on a model swap.** The worker
+  cleared `_in_q` and `_out`; the callback cleared `_dry_out` one block
+  later. A block the callback put in `_in_q` in between was answered *after*
+  its dry had been wiped, leaving wet a block ahead of dry for the rest of
+  the session. The callback now empties all three in the same step and the
+  worker waits until it has.
+  Test: `test_swap_straddling_a_callback_does_not_skew_the_pair`, which
+  stages exactly that interleaving by hand and then checks a 50/50 mix still
+  cancels.
+
+- `65c6c05` — **trim the standing backlog while the input is quiet.** Once
+  the input has been below −60 dB for 60 ms (`QUIET_RMS`, `QUIET_BLOCKS`) the
+  callback drops the queued wet and the dry paired with it from the head of
+  both, so nothing audible is cut. Counted in `stats.backlog_trimmed`, a
+  counter that had been declared and never used — the fix had been planned
+  and not built. It trims to *zero* standing blocks rather than one, because
+  the worker adds a block after the callback's own take. Skipped for chunked
+  processors, whose output normally sits in the FIFO a chunk at a time.
+
+- `d4c18cb` — **skip it during continuous sound.** The quiet trim cannot
+  help a stall mid-film, which is what the user hit. When the backlog stays
+  above 100 ms (`STANDING_LIMIT`) for 400 ms (`STANDING_RUN`) it is cut back
+  to 40 ms in one crossfaded skip of 4 ms (`SKIP_XFADE`), taking the same
+  count from both FIFOs so the pairing is untouched: a jump in time, not a
+  click. The healthy standing backlog on the reporter's machine is 40–80 ms,
+  hence the margin — a healthy stream is never skipped. `details ▸` now
+  shows **peak backlog** and **trimmed**, with the skip count beside it.
+
+**Tested in the engine, not by ear.** `tests/test_engine_chunked.py` grew
+`test_a_stall_is_trimmed_in_quiet_and_not_before` and
+`test_a_stall_during_sound_is_skipped_once`; both drive a `Stalling`
+processor that withholds output for a set number of blocks, and both assert
+the 50/50 mix still cancels afterwards, which is the only check that proves
+the pairing survived. `test_engine_chunked`, `test_live_model_swap`,
+`test_mask_shaper`, `test_engine_recovery` and `test_status_line` pass.
+`test_spleeter_chunking` could not run here — it needs the Spleeter models.
+
+**Still open.**
+- **None of this is verified in the real app.** The "glitches then lags"
+  report came from an instance running the build *before* `d4c18cb`, so the
+  skip was not in it. Restart the app, play something continuous, and read
+  `details ▸`: peak backlog, trimmed, skips. A healthy run should show no
+  skips at all.
+- The ~99 ms of steady-state added latency visible on the same recording is
+  a **separate** number and still unexplained; the recording showed no model
+  switch, so how much of it this bug caused is unknown.
+- "Processor lag: measuring…" can still fail to complete. Unchanged.
+
+**One change held back on purpose.** `assassin_live/audio/backends/pipewire.py`
+is modified and uncommitted: `create_trap_sink` adds `device.bus=bluetooth`
+to the node spec so GNOME's Sound Output list drops it.
+libgnome-volume-control makes a menu entry for every sink without ports
+*except* one on the bluetooth bus, which it treats as a headset mid
+profile-switch and skips (`gvc-mixer-control.c`, `sync_devices()`); nothing
+else here reads the bus. The menu then shows only real devices and the app
+sits unseen in front of whichever one is chosen. It stays out of a commit
+until the menu has been checked by eye. The file now also holds the other
+session's routing-debounce change (see the branch note at the top), so
+committing either one means splitting the hunks.
+
 ## What landed 2026-10-27 — "keep sound effects" live, and what it costs
 
 Asked for a switch to choose whether to preserve sound effects. There was no
@@ -1092,7 +1198,10 @@ which cross-validates the shorter route.
   `scripts/run_tests.sh`, which is display-free by design.
 
 **Still open.** Every number above is from music clips, which is MRX's worst
-case; it wants a listen on real cinematic content. Whether 1805 ms is
+case; it wants a listen on real cinematic content. The app was launched on
+2026-10-27 for exactly that listen and nothing has come back about the
+separation itself — the one report from that run was the glitch-and-lag
+above, which is the stall bug and not MRX. Whether 1805 ms is
 acceptable is the latency-reporting question (CURRENT_STATE item 4), still
 untested. Not bundled in the .deb: DnR's component-corpus terms are
 unchecked, the same question as StemgenRT's.

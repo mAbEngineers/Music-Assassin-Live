@@ -94,6 +94,20 @@ reported failure was audio stopping after the output was changed behind the
 app's back. Old `output_name` entries in settings.json are ignored.
 `test_routing_dry` needs the app closed to run.
 
+## The delay a stall leaves behind (2026-10-26/27)
+
+Audio drifting out of sync mid-session, fixed only by a restart, was a
+worker stall: the callback plays dry while the worker is away, the worker
+then delivers the missed blocks all at once, and the callback drains one per
+block, so the surplus stands there for the rest of the session. Three fixes
+in `audio/engine.py`: every queue is flushed in one step on a model swap
+(`f8796d3`); the standing backlog is trimmed once the input goes quiet
+(`65c6c05`); and during continuous sound a backlog over 100 ms for 400 ms is
+skipped back to 40 ms through a 4 ms crossfade (`d4c18cb`). `details` now
+shows peak backlog, how much was trimmed, and in how many skips. Tested in
+`tests/test_engine_chunked.py`, **not yet by ear** — the user's report came
+from a build without the last fix. Full account in HANDOVER.
+
 ## Keep sound effects, live (2026-10-27)
 
 There is now a **"Keep sound effects" switch** on the Processing card, and a
