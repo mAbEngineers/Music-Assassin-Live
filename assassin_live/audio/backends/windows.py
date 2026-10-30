@@ -227,6 +227,45 @@ class CoreAudio:
                 continue        # one role refusing is not the whole switch
         return ok
 
+    # -- endpoint volume ---------------------------------------------------
+    def _endpoint_volume(self, endpoint_id: str):
+        try:
+            from comtypes import CLSCTX_ALL, POINTER, cast
+            from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+            enumerator = AudioUtilities.GetDeviceEnumerator()
+            device = enumerator.GetDevice(endpoint_id)
+            iface = device.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+            return cast(iface, POINTER(IAudioEndpointVolume))
+        except Exception:
+            return None
+
+    def get_volume(self, endpoint_id: str) -> "tuple | None":
+        """(level 0.0-1.0, muted) for one endpoint, or None.
+
+        Scalar rather than dB: it is the quantity the volume keys and the
+        system slider move, so mirroring it is a straight copy with no
+        curve to get wrong.
+        """
+        vol = self._endpoint_volume(endpoint_id)
+        if vol is None:
+            return None
+        try:
+            return (float(vol.GetMasterVolumeLevelScalar()),
+                    bool(vol.GetMute()))
+        except Exception:
+            return None
+
+    def set_volume(self, endpoint_id: str, level: float, muted: bool) -> bool:
+        vol = self._endpoint_volume(endpoint_id)
+        if vol is None:
+            return False
+        try:
+            vol.SetMasterVolumeLevelScalar(max(0.0, min(1.0, level)), None)
+            vol.SetMute(bool(muted), None)
+            return True
+        except Exception:
+            return False
+
 
 class WindowsBackend:
     """enable() -> filter is inserted; disable() -> system restored.
@@ -252,6 +291,7 @@ class WindowsBackend:
         self.preferred_name: str | None = None  # user-picked endpoint, if any
         self._pending: SinkInfo | None = None
         self._pending_since: float = 0.0
+        self._last_trap_volume: "tuple | None" = None
 
     # -- availability ------------------------------------------------------
     @staticmethod
@@ -459,13 +499,14 @@ class WindowsBackend:
 
     # -- supervision -------------------------------------------------------
     def check(self) -> "str | None":
-        """Returns None (all good), 'real_sink_changed', or 'real_sink_lost'.
+        """See RoutingBackend.check() for what each return means.
 
-        Only those three: both callers (__main__.py, ui/app.py) switch on
-        the string, so anything else would be silently ignored. In
-        particular a vanished cable reports 'real_sink_lost' -- routing is
-        broken either way, and that is the event that makes the UI turn
-        cleanly off instead of showing "on" with no audio flowing.
+        All four outcomes, and the distinction between two of them is the
+        subtle part: 'real_sink_changed' means the user chose a different
+        output and callers remember it, 'real_sink_replaced' means their
+        hardware changed under them and callers must NOT -- their choice did
+        not change, their devices did. Reporting a yanked USB headset as a
+        choice would overwrite the preference they actually set.
         """
         if self.trap is None:
             return None
@@ -473,10 +514,12 @@ class WindowsBackend:
 
         trap_id = self._find_trap(endpoints)
         if trap_id is None:
-            # The cable was uninstalled or disabled under us. There is no
-            # trap to re-assert and nothing to capture from.
+            # The cable was uninstalled or disabled under us. Nothing can be
+            # re-asserted and there is nothing left to capture from, so the
+            # session has to be rebuilt or stopped -- which is exactly what
+            # 'trap_lost' tells the caller.
             self.trap = None
-            return "real_sink_lost"
+            return "trap_lost"
         self.trap = self._sink_for_in(endpoints, trap_id) or self.trap
 
         default = self._core.default_render_endpoint()
@@ -502,10 +545,11 @@ class WindowsBackend:
                       >= self.RETARGET_DEBOUNCE_S)
             if stable and (self.real is None
                            or candidate.name != self.real.name):
-                # Deliberately not recorded as preferred_name: the user
-                # changing the system default is not the same as them
-                # choosing an output in this app, and overwriting it here
-                # would silently rewrite the choice ui/app.py persisted.
+                # preferred_name is deliberately left alone here. Whether an
+                # event counts as the user's choice is the caller's call --
+                # it is what separates 'real_sink_changed' from
+                # 'real_sink_replaced' above -- so the backend reports and
+                # does not decide.
                 self.real = candidate
                 return "real_sink_changed"
             return None
@@ -515,8 +559,9 @@ class WindowsBackend:
         self._pending = None
         ids = {eid for eid, _ in endpoints}
         if self.real is not None and self.real.name not in ids:
+            # Their device vanished; a fallback is not a choice they made.
             self.real = self._pick_real_in(endpoints, self.preferred_name, None)
-            return "real_sink_changed" if self.real else "real_sink_lost"
+            return "real_sink_replaced" if self.real else "real_sink_lost"
         return None
 
     # -- engine seam -------------------------------------------------------
@@ -590,6 +635,98 @@ class WindowsBackend:
         describes as a best-effort pass; on Windows the first pass is
         authoritative.)"""
         return True
+
+    def retarget_playback(self, pid: int, sink_name: str) -> bool:
+        """Not possible on WASAPI: a stream is bound to its endpoint when it
+        is opened, and neither PortAudio nor sounddevice exposes any way to
+        move a running one. base.py's documented answer for that is False,
+        which means "use the stop/start path", not "the audio is broken".
+
+        So the live-move optimisation PipeWire gets from C1 does not apply
+        here, and a Windows output change costs the full engine restart. It
+        is a missing optimisation, not a defect -- and it is why base.py
+        keeps pin_stream and this as separate questions rather than assuming
+        a platform answers both the same way.
+        """
+        return False
+
+    # -- volume ------------------------------------------------------------
+    def adopt_volume(self) -> None:
+        """Seed the mirror from the real endpoint, so inserting the filter
+        neither changes how loud anything is nor makes the slider jump."""
+        if self.trap is None or self.real is None:
+            return
+        level = self._core.get_volume(self.real.name)
+        if level is None:
+            return
+        self._core.set_volume(self.trap.name, level[0], level[1])
+        self._last_trap_volume = level
+
+    def sync_volume(self) -> "tuple | None":
+        """Mirror the cable's volume onto the real endpoint (ROADMAP C2).
+
+        Needed for the same reason as on Linux: while filtering, the cable
+        is the system default, so the volume keys and the system slider move
+        *it* -- and its render side goes nowhere, because the engine plays to
+        the real endpoint directly. Without this the keys are inert.
+
+        Mirrors only on a change, so adjusting the real device directly in a
+        mixer is not immediately overwritten, and treats the first reading
+        as a baseline rather than a change.
+
+        UNVERIFIED ON HARDWARE, and the one thing to check first: on Linux
+        it is measured that a sink's volume does not scale its monitor
+        (scripts/spike_c2_monitor_volume.py), so the trap's level is
+        harmless to the model. Whether a virtual cable's render volume
+        scales what its capture side produces is a property of that driver
+        and has not been measured. If it does, the mirror double-attenuates:
+        the capture arrives quiet AND the real endpoint is set quiet, so the
+        keys act roughly twice as hard. The fix in that case is to pin the
+        cable at unity here and mirror only to the real endpoint -- at the
+        cost, as on Linux, of the system slider snapping back to 100%.
+        """
+        if self.trap is None or self.real is None:
+            return None
+        trap = self._core.get_volume(self.trap.name)
+        if trap is None or trap == self._last_trap_volume:
+            return None
+        first = self._last_trap_volume is None
+        self._last_trap_volume = trap
+        if first:
+            return None      # a baseline reading, not a change to mirror
+        if not self._core.set_volume(self.real.name, trap[0], trap[1]):
+            return None
+        return trap
+
+    def diagnose_capture(self, pid: int) -> "str | None":
+        """Is what we are capturing still what we meant to capture?
+
+        Windows offers no graph to inspect -- there is no pw-dump that would
+        say which endpoint another process's stream is attached to -- so the
+        per-stream question base.py describes cannot be answered here and
+        'capture_hijacked' is never reported. base.py permits returning None
+        always for exactly this reason.
+
+        Two of its states are still answerable structurally, though, and
+        both are worth catching:
+
+          trap_lost     the cable is gone, so the capture endpoint this
+                        session was built on no longer exists.
+          feedback_loop the device we render to IS the cable we capture
+                        from. That is output feeding input, unconditionally
+                        wrong and audible, and on Windows it is reachable:
+                        a cable's own render endpoint is a perfectly
+                        ordinary output that could be picked.
+        """
+        if self.trap is None:
+            return None
+        endpoints = self._core.render_endpoints()
+        if self._find_trap(endpoints) is None:
+            return "trap_lost"
+        if self.real is not None and _matches(self.real.description,
+                                              TRAP_RENDER_NAMES):
+            return "feedback_loop"
+        return None
 
 
 def list_sinks() -> list:

@@ -104,7 +104,12 @@ def main():
                     break
                 continue
             event = routing.check()
-            if event == "real_sink_changed" and routing.real:
+            # Both device events are followed. They are separate so that a
+            # caller can tell a choice from an accident -- 'changed' is the
+            # user picking an output, 'replaced' is their hardware vanishing
+            # and a fallback being chosen -- and only the former should ever
+            # be remembered as a preference. See backends/base.py check().
+            if event in ("real_sink_changed", "real_sink_replaced") and routing.real:
                 try:
                     engine.retarget(routing.monitor_source, routing.real.name)
                 except Exception as e:  # noqa: BLE001 — don't limp along on a
@@ -114,6 +119,13 @@ def main():
                     break
             elif event == "real_sink_lost":
                 print("output device lost, waiting...")
+            elif event == "trap_lost":
+                # The interception device itself is gone, so there is nothing
+                # to re-assert and nothing to capture. Stop rather than spin
+                # reporting healthy stats for audio that is not being
+                # filtered.
+                print("\ninterception device lost, stopping")
+                break
             s = engine.stats
             print(f"\r{s.worker_ms_avg:5.1f} ms/block  blocks={s.blocks_in}"
                   f"  fallbacks={s.fallback_blocks}  xruns={s.xruns}   ",

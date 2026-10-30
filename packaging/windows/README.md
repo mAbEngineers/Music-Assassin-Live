@@ -20,7 +20,17 @@ What is verified, and how:
 | `pycaw`/`comtypes` import and enumerate on real Windows | `.github/workflows/windows-build.yml` |
 | The exe builds and the `.iss` compiles | same workflow |
 
-What is **not** verified: that audio actually flows end to end. That needs a
+What is **not** verified, in rough order of what to try first:
+
+1. **Whether the volume mirror double-attenuates.** On Linux it is measured
+   that a sink's volume does not scale its monitor, so the trap's level is
+   harmless to the model. Whether a virtual cable's render volume scales what
+   its capture side produces is a property of that driver and nobody has
+   measured it. If it does, lowering the volume attenuates twice -- once in
+   what the model is fed, once on the real endpoint -- and the keys feel
+   roughly twice as strong. The fix is in `sync_volume()`'s docstring.
+2. **The installer's VB-CABLE sequence**, which has compiled but never run.
+3. That audio actually flows end to end. That needs a
 Windows machine with a cable installed, and no CI runner has either — GitHub
 runners report zero audio endpoints. Until someone runs it, Windows support
 is written and plausible, not proven.

@@ -54,6 +54,9 @@ class FakeCoreAudio:
         self.switches = []          # every endpoint id we were asked to set
         self.refuse = False         # simulate IPolicyConfig failing outright
         self.enumerations = 0       # COM round trips, counted
+        # endpoint id -> (level 0..1, muted), as IAudioEndpointVolume holds it
+        self.volumes = {eid: (0.5, False) for eid in FRIENDLY}
+        self.deaf = False           # simulate volume interfaces unavailable
 
     def render_endpoints(self):
         self.enumerations += 1
@@ -61,6 +64,17 @@ class FakeCoreAudio:
 
     def default_render_endpoint(self):
         return self.default
+
+    def get_volume(self, endpoint_id):
+        if self.deaf or endpoint_id not in self.present:
+            return None
+        return self.volumes.get(endpoint_id)
+
+    def set_volume(self, endpoint_id, level, muted):
+        if self.deaf or endpoint_id not in self.present:
+            return False
+        self.volumes[endpoint_id] = (max(0.0, min(1.0, level)), bool(muted))
+        return True
 
     def set_default_render_endpoint(self, endpoint_id):
         self.switches.append(endpoint_id)
@@ -293,18 +307,18 @@ def test_check_does_not_overwrite_the_users_choice():
 
 
 def test_check_reports_a_vanished_cable():
-    """Uninstalling or disabling the cable mid-session. 'real_sink_lost' is
-    the only honest answer available: both callers switch on the string and
-    it is the one that turns the UI cleanly off."""
+    """Uninstalling or disabling the cable mid-session. Distinct from losing
+    an output device: nothing can be re-asserted and there is nothing left to
+    capture from, so the session has to be rebuilt or stopped."""
     def go(state):
         core = FakeCoreAudio(present=[CABLE, SPEAKERS])
         b = backend(core)
         b.enable()
         core.present.remove(CABLE)
         core.default = SPEAKERS
-        assert b.check() == "real_sink_lost"
+        assert b.check() == "trap_lost"
         assert b.trap is None
-        print("  cable removed  -> real_sink_lost, which callers handle")
+        print("  cable removed  -> trap_lost, not a device event")
     _isolated(go)
 
 
@@ -314,9 +328,11 @@ def test_check_replaces_a_vanished_output():
         b = backend(core)
         b.enable()
         core.present.remove(SPEAKERS)       # unplugged
-        assert b.check() == "real_sink_changed"
+        # 'replaced', not 'changed': their hardware went away, they did not
+        # choose anything, and callers must not remember this as a choice.
+        assert b.check() == "real_sink_replaced"
         assert b.real.name == HDMI
-        print("  output unplugged-> real_sink_changed onto what is left")
+        print("  output unplugged-> real_sink_replaced, not a user choice")
     _isolated(go)
 
 
@@ -333,10 +349,11 @@ def test_check_reports_no_output_left():
 
 
 def test_check_only_ever_returns_documented_events():
-    """base.py documents exactly three return values and both callers
-    switch on the string, so an undocumented one is silently ignored --
-    the failure mode is the UI showing "on" with no audio flowing."""
-    allowed = {None, "real_sink_changed", "real_sink_lost"}
+    """base.py documents exactly these and both callers switch on the
+    string, so an undocumented one is silently ignored -- the failure mode
+    is the UI showing "on" with no audio flowing."""
+    allowed = {None, "real_sink_changed", "real_sink_replaced",
+               "real_sink_lost", "trap_lost"}
     seen = set()
 
     def go(state):
@@ -667,6 +684,173 @@ def test_pin_stream_is_a_noop_that_succeeds():
         assert backend().pin_stream(1234, "CABLE Output", SPEAKERS) is True
         print("  pin_stream     -> True, no spurious warning from the engine")
     _isolated(go)
+
+
+# -- volume mirror (C2) -----------------------------------------------------
+
+def test_adopt_volume_matches_the_cable_to_the_speakers():
+    """Inserting the filter must not change how loud anything is, nor make
+    the system slider jump."""
+    def go(state):
+        core = FakeCoreAudio(default=SPEAKERS)
+        core.volumes[SPEAKERS] = (0.3, False)
+        core.volumes[CABLE] = (1.0, False)
+        b = backend(core)
+        b.enable()
+        b.adopt_volume()
+        assert core.volumes[CABLE] == (0.3, False), core.volumes[CABLE]
+        print("  adopt_volume   -> cable seeded from the speakers' level")
+    _isolated(go)
+
+
+def test_sync_volume_makes_the_volume_keys_work():
+    """While filtering, the cable IS the system default, so the keys move it
+    and its render side goes nowhere. Without the mirror they are inert."""
+    def go(state):
+        core = FakeCoreAudio(default=SPEAKERS)
+        b = backend(core)
+        b.enable()
+        b.adopt_volume()
+        assert b.sync_volume() is None, "mirrored without a change"
+        core.volumes[CABLE] = (0.2, False)        # user presses volume-down
+        assert b.sync_volume() == (0.2, False)
+        assert core.volumes[SPEAKERS] == (0.2, False), core.volumes[SPEAKERS]
+        print("  sync_volume    -> cable's level copied onto the speakers")
+    _isolated(go)
+
+
+def test_sync_volume_mirrors_mute():
+    def go(state):
+        core = FakeCoreAudio(default=SPEAKERS)
+        b = backend(core)
+        b.enable(); b.adopt_volume()
+        core.volumes[CABLE] = (0.5, True)
+        assert b.sync_volume() == (0.5, True)
+        assert core.volumes[SPEAKERS][1] is True
+        print("  mute           -> mirrored as well as the level")
+    _isolated(go)
+
+
+def test_sync_volume_only_acts_on_a_change():
+    """So adjusting the real device directly in a mixer is not immediately
+    overwritten on the next tick."""
+    def go(state):
+        core = FakeCoreAudio(default=SPEAKERS)
+        b = backend(core)
+        b.enable(); b.adopt_volume()
+        core.volumes[SPEAKERS] = (0.9, False)     # changed in a mixer
+        for _ in range(4):
+            assert b.sync_volume() is None
+        assert core.volumes[SPEAKERS] == (0.9, False), "overwrote the mixer"
+        print("  no change      -> real device left alone")
+    _isolated(go)
+
+
+def test_first_reading_is_a_baseline_not_a_change():
+    """Without adopt_volume() having run, the first observation must not be
+    mirrored -- there is nothing to compare it against yet."""
+    def go(state):
+        core = FakeCoreAudio(default=SPEAKERS)
+        core.volumes[SPEAKERS] = (0.4, False)
+        core.volumes[CABLE] = (0.8, False)
+        b = backend(core)
+        b.enable()
+        assert b.sync_volume() is None, "mirrored a baseline reading"
+        assert core.volumes[SPEAKERS] == (0.4, False)
+        core.volumes[CABLE] = (0.6, False)
+        assert b.sync_volume() == (0.6, False)
+        print("  baseline       -> first reading recorded, not applied")
+    _isolated(go)
+
+
+def test_volume_methods_survive_no_volume_interface():
+    """IAudioEndpointVolume can fail to activate. That must degrade, not
+    raise: this runs on the same ~1 s tick as check()."""
+    def go(state):
+        core = FakeCoreAudio(default=SPEAKERS)
+        b = backend(core)
+        b.enable()
+        core.deaf = True
+        b.adopt_volume()                 # must not raise
+        assert b.sync_volume() is None
+        print("  no volume iface-> degrades quietly, does not raise")
+    _isolated(go)
+
+
+def test_volume_methods_are_inert_before_enable():
+    def go(state):
+        b = backend()
+        b.adopt_volume()
+        assert b.sync_volume() is None
+        print("  before enable  -> volume mirror is inert")
+    _isolated(go)
+
+
+# -- the other two seam methods --------------------------------------------
+
+def test_retarget_playback_declines():
+    """A WASAPI stream is bound to its endpoint when it opens and neither
+    PortAudio nor sounddevice can move a running one. base.py's documented
+    answer is False, meaning "use the stop/start path"."""
+    def go(state):
+        assert backend().retarget_playback(1234, SPEAKERS) is False
+        print("  retarget_play  -> False, so callers use stop/start")
+    _isolated(go)
+
+
+def test_diagnose_capture_is_quiet_when_correct():
+    def go(state):
+        core = FakeCoreAudio(present=[CABLE, SPEAKERS], default=SPEAKERS)
+        b = backend(core)
+        b.enable()
+        assert b.diagnose_capture(1234) is None
+        print("  diagnose ok    -> None when routing is sound")
+    _isolated(go)
+
+
+def test_diagnose_capture_sees_a_vanished_cable():
+    def go(state):
+        core = FakeCoreAudio(present=[CABLE, SPEAKERS], default=SPEAKERS)
+        b = backend(core)
+        b.enable()
+        core.present.remove(CABLE)
+        assert b.diagnose_capture(1234) == "trap_lost"
+        print("  diagnose       -> trap_lost when the cable goes")
+    _isolated(go)
+
+
+def test_diagnose_capture_catches_a_feedback_loop():
+    """Rendering into the cable we capture from: output feeds input. On
+    Windows this is reachable, because a cable's render endpoint is an
+    ordinary output that could be selected."""
+    def go(state):
+        core = FakeCoreAudio(present=[CABLE, SPEAKERS], default=SPEAKERS)
+        b = backend(core)
+        b.enable()
+        b.real = b._sink_for(CABLE)          # the pathological case
+        assert b.diagnose_capture(1234) == "feedback_loop"
+        print("  diagnose       -> feedback_loop when we play into the cable")
+    _isolated(go)
+
+
+def test_diagnose_capture_is_inert_before_enable():
+    def go(state):
+        assert backend().diagnose_capture(1234) is None
+        print("  diagnose       -> None before a session exists")
+    _isolated(go)
+
+
+def test_implements_the_newer_protocol_too():
+    """base.py on this branch does not declare these four yet -- they live on
+    feat/separator-spike, where the Protocol grew sync_volume, adopt_volume,
+    retarget_playback and diagnose_capture, and check() grew two outcomes.
+    Asserted explicitly so this backend is complete when that merges rather
+    than quietly missing half the interface."""
+    for name in ("sync_volume", "adopt_volume", "retarget_playback",
+                 "diagnose_capture"):
+        assert callable(getattr(WindowsBackend, name, None)), \
+            f"WindowsBackend is missing {name}"
+    print("  newer protocol -> all four methods present")
 
 
 def main():

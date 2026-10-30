@@ -452,7 +452,11 @@ class App:
                     self.status.config(text=f"audio stream died, restart failed: {e}")
                 return
             event = self.routing.check()
-            if event == "real_sink_changed" and self.routing.real:
+            # 'changed' and 'replaced' are both followed; they are distinct
+            # so a caller can tell the user's choice from their hardware
+            # disappearing, and only a choice should be remembered. See
+            # backends/base.py check().
+            if event in ("real_sink_changed", "real_sink_replaced") and self.routing.real:
                 try:
                     self.engine.retarget(self.routing.monitor_source,
                                          self.routing.real.name)
@@ -466,6 +470,14 @@ class App:
             elif event == "real_sink_lost":
                 self._turn_off()
                 self.status.config(text="output device lost — turned off")
+            elif event == "trap_lost":
+                # The interception device is gone -- on Windows, the virtual
+                # cable was uninstalled or disabled mid-session. Nothing can
+                # be re-asserted, so drop to a clean off state instead of
+                # showing "on" with no audio being filtered.
+                self._turn_off()
+                self.status.config(
+                    text="audio interception device lost — turned off")
             s = self.engine.stats if self.engine else None
             if s:
                 out = self.routing.real.description or self.routing.real.name \
