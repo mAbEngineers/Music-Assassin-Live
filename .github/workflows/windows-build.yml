@@ -169,7 +169,17 @@ jobs:
       - name: Show which Inno Setup compiled this
         shell: cmd
         run: |
-          "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" /? 2>&1 | findstr /i "Inno Setup"
+          "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" /? 2>&1 | findstr /i "Compiler engine version"
+          if errorlevel 1 (
+            echo ERROR: could not read the ISCC version banner >&2
+            exit /b 1
+          )
+          "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" /? 2>&1 | findstr /c:"6.4.3" >nul
+          if errorlevel 1 (
+            echo ERROR: ISCC is not 6.4.3 -- the licensing pin did not take >&2
+            exit /b 1
+          )
+          echo OK: compiled by Inno Setup 6.4.3
           exit /b 0
 
       # The weights are release assets, not repository files, so they have to

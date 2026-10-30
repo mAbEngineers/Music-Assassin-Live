@@ -35,6 +35,11 @@
 ;      stable rather than a hash of a moving target. When VB-Audio publishes
 ;      Pack46 this pin keeps working against 45; it does not silently start
 ;      trusting a new file. Bumping it is a deliberate edit.
+; EDITING THE PASCAL BELOW: never begin a line with #13#10. The Inno
+; preprocessor reads a leading '#' as a directive and the compile dies with
+; "Unknown preprocessor directive" -- which is how the first version of this
+; failed. Keep newline literals mid-line, after a string or a '+'.
+;
 ;   3. One prompt cannot be removed. Windows shows its own
 ;      "install this device software?" dialog for any driver, and VB-Audio
 ;      have confirmed it cannot be suppressed. -i -h silences THEIR
@@ -192,12 +197,11 @@ begin
             'Music Assassin Live needs VB-CABLE, a free virtual audio ' +
             'driver, to route system sound through it. The app will tell ' +
             'you the same thing and refuse to start until it is present, ' +
-            'so nothing is broken -- it just needs installing by hand:' +
-            #13#10#13#10 +
+            'so nothing is broken -- it just needs installing by hand:' + #13#10#13#10 +
             '  1. Download the ZIP from vb-cable.com' + #13#10 +
             '  2. Extract it' + #13#10 +
-            '  3. Right-click VBCABLE_Setup_x64.exe, Run as administrator' +
-            #13#10 + '  4. Reboot' + #13#10#13#10 +
+            '  3. Right-click VBCABLE_Setup_x64.exe, Run as administrator' + #13#10 +
+            '  4. Reboot' + #13#10#13#10 +
             'VB-CABLE is donationware from VB-Audio. Open the page now?',
             mbInformation, MB_YESNO) = IDYES then
     ShellExecAsOriginalUser('open', 'https://vb-audio.com/Cable/', '', '',
