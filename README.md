@@ -1,8 +1,7 @@
 <p align="center">
   <img src="assassin_live/ui/assets/icon.png" width="96" alt="Music Assassin Live icon">
+  <h1 align="center">Music Assassin Live</h1>
 </p>
-
-<h1 align="center">Music Assassin Live</h1>
 
 <p align="center">
   <a href="https://github.com/mAbEngineers/music-assassin-live/releases/latest"><img src="https://img.shields.io/github/v/release/mAbEngineers/music-assassin-live" alt="Latest release"></a>
