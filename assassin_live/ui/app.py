@@ -733,6 +733,11 @@ class App:
             return label
         if not self.engine.retarget_output(sink.name):
             self.engine.retarget(self.routing.monitor_source, sink.name)
+        # The menu entry names the device it plays to; rebuilding it also
+        # drops our capture link, so pin both of our streams again.
+        if self.routing.relabel(sink):
+            self.routing.pin_stream(os.getpid(), self.routing.monitor_source,
+                                    sink.name)
         return label
 
     # -- actions ---------------------------------------------------------------
@@ -1090,7 +1095,9 @@ class App:
         try:
             self._tick_body()
         finally:
-            self.root.after(1000, self._tick)
+            # Quicker while a newly chosen output waits out its debounce, so
+            # a pick in the system menu is followed in ~0.3 s, not ~2 s.
+            self.root.after(300 if self.routing.settling else 1000, self._tick)
 
     def _tick_body(self):
         # Not while a transition is in flight. _work_on/_work_off run off

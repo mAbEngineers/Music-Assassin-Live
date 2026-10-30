@@ -98,12 +98,39 @@ def test_user_picks_a_device_in_the_system_menu():
     check("but the trap is re-asserted immediately, so we never sit bypassed",
           g.set_default_calls == [TRAP.id], str(g.set_default_calls))
 
-    g.default = SPEAKERS                      # they really did pick it
+    # No second sighting: the trap is the default again, which is what
+    # really happens, and the pick is one event.
+    check("the trap is the default again", g.default is TRAP)
+    check("not old enough yet -> still waiting",
+          b.check() is None and b.settling)
     clock.advance(pw.PipeWireBackend.RETARGET_DEBOUNCE_S + 0.01)
     second = b.check()
     check("held steady past the debounce -> real_sink_changed",
           second == "real_sink_changed", f"got {second!r}")
     check("and that is the device we now play to", b.real.name == SPEAKERS.name)
+
+
+def test_a_pick_that_was_a_transient_is_dropped():
+    print("\na candidate that vanishes before it is confirmed")
+    clock = FakeClock()
+    g = Graph([TRAP, HEADPHONES, SPEAKERS], SPEAKERS)
+    b = backend(g, clock)
+    b.check()
+    g.sinks.remove(SPEAKERS)
+    clock.advance(pw.PipeWireBackend.RETARGET_DEBOUNCE_S + 0.01)
+    check("a sink that no longer exists is not followed",
+          b.check() is None and b.real.name == HEADPHONES.name)
+    check("and nothing is left pending", not b.settling)
+
+
+def test_picking_the_current_device_changes_nothing():
+    print("\nsomeone re-picks the device we already use")
+    clock = FakeClock()
+    g = Graph([TRAP, HEADPHONES], HEADPHONES)
+    b = backend(g, clock)
+    b.check()
+    clock.advance(pw.PipeWireBackend.RETARGET_DEBOUNCE_S + 0.01)
+    check("no event", b.check() is None)
 
 
 def test_debounce_is_short_enough_to_feel_immediate():
@@ -169,6 +196,8 @@ def main() -> int:
     try:
         test_steady_state()
         test_user_picks_a_device_in_the_system_menu()
+        test_a_pick_that_was_a_transient_is_dropped()
+        test_picking_the_current_device_changes_nothing()
         test_debounce_is_short_enough_to_feel_immediate()
         test_flapping_device_is_not_followed()
         test_our_device_vanishes()

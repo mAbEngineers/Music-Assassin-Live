@@ -201,10 +201,26 @@ def destroy_node(node_id: int) -> None:
                    capture_output=True, timeout=10)
 
 
-def create_trap_sink(timeout_s: float = 3.0) -> SinkInfo:
+def create_trap_sink(timeout_s: float = 3.0, playing_to: str | None = None) -> SinkInfo:
+    # The trap shows in GNOME's Sound Output list as "Music Assassin". That
+    # was tried and failed to hide: the gvc shipped with GNOME 46 lists
+    # every port-less sink and has no bluetooth-bus exemption (checked with
+    # a Gvc probe against test nodes and strings in libgvc.so).
+    # media.class=Audio/Sink/Virtual does hide it from the list, but then
+    # wpctl refuses it as a default and WirePlumber ignores it as one
+    # (tested 2026-10-28), so no stream ever reaches it.
+    #
+    # Since the entry has to show, it names the device it plays to, so the
+    # menu still says where the sound goes. The description cannot be changed
+    # on a live node (set-param Props params is ignored), so the name is
+    # right as of the switch-on; PipeWireBackend.relabel() recreates the node
+    # when the output is later changed.
+    desc = SINK_DESC
+    if playing_to:
+        desc = f"{SINK_DESC} \u2192 {playing_to.replace(chr(34), '')}"
     spec = (
         "{ factory.name=support.null-audio-sink"
-        f' node.name={SINK_NAME} node.description="{SINK_DESC}"'
+        f' node.name={SINK_NAME} node.description="{desc}"'
         " media.class=Audio/Sink object.linger=true audio.position=[FL FR] }"
     )
     subprocess.run(["pw-cli", "create-node", "adapter", spec],
@@ -326,6 +342,7 @@ class PipeWireBackend:
         self._pending: SinkInfo | None = None
         self._pending_since: float = 0.0
         self._last_trap_volume: tuple | None = None
+        self._trap_label: str | None = None
 
     # -- crash recovery ----------------------------------------------------
     @staticmethod
@@ -353,9 +370,10 @@ class PipeWireBackend:
             prev = None
         ROUTING_STATE.write_text(json.dumps(
             {"previous_default": prev.name if prev else None, "ts": time.time()}))
-        self.trap = create_trap_sink()
         self.real = prev or next(
             (s for s in list_sinks() if s.name != SINK_NAME), None)
+        self._trap_label = (self.real.description or self.real.name) if self.real else None
+        self.trap = create_trap_sink(playing_to=self._trap_label)
         self._pending = None
         self._pending_since = 0.0
         set_default(self.trap.id)
@@ -370,10 +388,41 @@ class PipeWireBackend:
         if self.trap:
             destroy_node(self.trap.id)
         self.trap = self.real = None
+        self._trap_label = None
         self._last_trap_volume = None
         ROUTING_STATE.unlink(missing_ok=True)
 
+    def relabel(self, real: SinkInfo) -> bool:
+        """Rename the trap after the output changed, so the sound menu keeps
+        naming the device that is really playing.
+
+        A live node's description cannot be edited, so this destroys the trap
+        and creates it again under the same name with the new label, then
+        makes it the default and restores its volume. WirePlumber re-links
+        the streams that follow the default; the capture and playback
+        streams of this process are re-pinned by the caller. Costs a short
+        glitch, so it is done only when the label would actually change.
+        """
+        if not self.trap or real is None:
+            return False
+        label = real.description or real.name
+        if label == self._trap_label:
+            return False
+        volume = get_volume(self.trap.id)
+        destroy_node(self.trap.id)
+        self.trap = create_trap_sink(playing_to=label)
+        self._trap_label = label
+        set_default(self.trap.id)
+        if volume:
+            set_volume(self.trap.id, *volume)
+        return True
+
     # -- supervision ----------------------------------------------------------
+    @property
+    def settling(self) -> bool:
+        """A candidate output is waiting out its debounce; check again soon."""
+        return self._pending is not None
+
     def check(self) -> str | None:
         """Returns None (all good), 'real_sink_changed', 'real_sink_lost',
         or 'trap_lost'."""
@@ -408,8 +457,28 @@ class PipeWireBackend:
                 self.real = default
                 return "real_sink_changed"
             return None
-        # default is still us; make sure our output device still exists
-        self._pending = None
+        # default is still us.
+        #
+        # A pick in the system menu is ONE event: we put the trap straight
+        # back, so the candidate is never seen as the default a second
+        # time. Insisting on seeing it again (as this once did) meant a
+        # single pick was never followed -- the audio stayed on the old
+        # device while the menu snapped back to us. So the candidate is
+        # confirmed by age and by still existing, not by re-observation; a
+        # flapping one is replaced by each newer sighting and never ages.
+        pending, self._pending = self._pending, None
+        if pending is not None:
+            if not any(s.name == pending.name for s in list_sinks()):
+                pass                                  # it was a transient
+            elif self.real is not None and pending.name == self.real.name:
+                pass                                  # nothing to follow
+            elif time.monotonic() - self._pending_since >= self.RETARGET_DEBOUNCE_S:
+                self.real = pending
+                return "real_sink_changed"
+            else:
+                self._pending = pending               # not old enough yet
+                return None
+        # make sure our output device still exists
         if self.real and not any(s.name == self.real.name for s in list_sinks()):
             # Distinct from 'real_sink_changed' on purpose. That one means a
             # human picked a device and we should follow and remember it;

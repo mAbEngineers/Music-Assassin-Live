@@ -73,6 +73,18 @@ class RoutingBackend(Protocol):
         """
         ...
 
+    @property
+    def settling(self) -> bool:
+        """True while a newly chosen output waits out check()'s debounce;
+        the caller polls faster then, so the pick is followed promptly."""
+        ...
+
+    def relabel(self, real: SinkInfo) -> bool:
+        """Make the interception device's visible name follow `real`.
+        Returns True if the device was rebuilt to do so, in which case the
+        caller must re-pin its own streams."""
+        ...
+
     def sync_volume(self) -> "tuple | None":
         """Mirror any volume/mute the user made on the trap device onto the
         real output device, so the volume keys keep working while the filter

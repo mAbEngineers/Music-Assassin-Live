@@ -110,6 +110,7 @@ class FakeSink:
 
 class FakeRouting:
     monitor_source = "MusicAssassin.monitor"
+    settling = False
 
     def __init__(self, real="hw-sink"):
         self.real = FakeSink(real) if real else None
