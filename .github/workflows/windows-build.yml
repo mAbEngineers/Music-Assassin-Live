@@ -1,0 +1,241 @@
+name: windows build
+
+# Proves the Windows packaging COMPILES and that the Windows routing backend
+# behaves. It cannot prove the app actually routes audio: a GitHub runner has
+# no audio endpoints at all and certainly no virtual audio cable, so there is
+# nothing here to route. That last step needs a real Windows box -- see
+# docs/ROADMAP.md D3.6.
+#
+# So what IS proven here:
+#   1. backends/windows.py's state machine, via tests/test_windows_routing.py.
+#      Hardware-free by construction (all COM sits behind CoreAudio, which the
+#      tests replace), so it runs anywhere -- but running it ON Windows also
+#      checks that pycaw and comtypes import on the real platform, which
+#      Linux cannot.
+#   2. The app still refuses to start cleanly, now because no cable is
+#      installed rather than because no backend exists. Asserted on the
+#      reason text, so a guard that fires for the wrong reason is a failure.
+#   3. PyInstaller bundles it all and ISCC compiles the installer, with the
+#      real model weights fetched from the models-v1 release against pinned
+#      SHA-256s. The artifact is therefore an app that can actually process
+#      audio -- unsigned, but not the hollow models-free build this job
+#      produced before.
+#
+# This exists because packaging/windows/ sat unbuilt from 2026-08-13 and
+# nobody could say whether the .iss even parsed. PyInstaller does not
+# cross-compile and the project has no Windows machine, so CI is the only
+# place this can be answered.
+
+# The path list includes the tests this job runs and the files it reads. That
+# is not tidiness: a fix to tests/test_platform_guard.py was pushed and no run
+# triggered, because only assassin_live/** and the packaging paths were listed
+# -- so the job could go stale against the very tests it exists to run.
+on:
+  push:
+    paths:
+      - 'assassin_live/**'
+      - 'packaging/windows/**'
+      - 'packaging/icons/*.ico'
+      - 'packaging/model-licenses/**'
+      - 'models/*.json'
+      - 'requirements.txt'
+      - 'scripts/build_windows.bat'
+      - 'scripts/fetch_models.py'
+      - 'tests/test_platform_guard.py'
+      - 'tests/test_windows_routing.py'
+      - '.github/workflows/windows-build.yml'
+  pull_request:
+    paths:
+      - 'assassin_live/**'
+      - 'packaging/windows/**'
+      - 'packaging/icons/*.ico'
+      - 'packaging/model-licenses/**'
+      - 'models/*.json'
+      - 'requirements.txt'
+      - 'scripts/build_windows.bat'
+      - 'scripts/fetch_models.py'
+      - 'tests/test_platform_guard.py'
+      - 'tests/test_windows_routing.py'
+      - '.github/workflows/windows-build.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # scripts/build_windows.bat expects a .venv, the same as the Linux
+      # build expects one -- keeping CI on the developer entry point rather
+      # than a parallel set of commands, so the two cannot drift.
+      - name: Create venv and install dependencies
+        shell: cmd
+        run: |
+          python -m venv .venv
+          .venv\Scripts\python.exe -m pip install --upgrade pip
+          .venv\Scripts\pip.exe install -r requirements.txt pyinstaller
+
+      # Running these on Windows is not redundant with running them on Linux:
+      # the same assertions also exercise the real pycaw/comtypes imports and
+      # the real platform dispatch in routing.py, neither of which Linux can
+      # check.
+      - name: Test the Windows routing backend
+        shell: cmd
+        run: |
+          .venv\Scripts\python.exe tests\test_platform_guard.py
+          if errorlevel 1 exit /b 1
+          .venv\Scripts\python.exe tests\test_windows_routing.py
+          if errorlevel 1 exit /b 1
+          exit /b 0
+
+      # Linux cannot check this: pycaw has shipped two different return types
+      # from GetSpeakers() across versions, and assuming the wrong one once
+      # cost a round trip to an offline test machine. Here it either imports
+      # and enumerates or it does not.
+      - name: Check Core Audio enumeration against the real pycaw
+        shell: cmd
+        run: |
+          .venv\Scripts\python.exe -c "from assassin_live.audio.backends.windows import CoreAudio; c = CoreAudio(); e = c.render_endpoints(); print('render endpoints:', len(e)); [print('   ', n) for _, n in e]; print('default:', c.default_render_endpoint()); print('policy config:', 'yes' if c._policy_config() is not None else 'no')"
+          if errorlevel 1 exit /b 1
+          exit /b 0
+
+      # The app must refuse to run here, cleanly, and for the right reason:
+      # on a runner there is no virtual cable, which is a different refusal
+      # from the "no backend for this platform" one this used to get. If this
+      # step ever passes silently it means the guard stopped working.
+      - name: Assert the app refuses to run without a cable, and says why
+        shell: cmd
+        # Explicit errorlevel checks rather than &&/||: a non-zero exit is
+        # the SUCCESS condition here, and cmd's operator chaining leaks the
+        # original errorlevel through a trailing `|| echo`, failing the step
+        # for doing exactly what it was asked to do.
+        run: |
+          .venv\Scripts\python.exe -c "import sys; from assassin_live.audio import routing; r = routing.unsupported_reason() or ''; print(r); sys.exit(0 if 'cable' in r.lower() else 1)"
+          if errorlevel 1 (
+            echo ERROR: expected a 'no virtual cable' refusal, got something else >&2
+            exit /b 1
+          )
+          .venv\Scripts\python.exe -m assassin_live --headless
+          if errorlevel 1 (
+            echo OK: refused to start without a cable, as intended
+            exit /b 0
+          )
+          echo ERROR: the app started with no cable installed instead of refusing >&2
+          exit /b 1
+
+      # 6.4.3 specifically: 6.5.0+ added a paid commercial-license tier, so
+      # this is the last version unambiguously free for this project.
+      #
+      # The downgrade flags are load-bearing, not defensive. windows-latest
+      # ships a newer Inno Setup preinstalled (6.7.1 as of 2026-08-20), which
+      # is on the wrong side of that licensing line, and choco refuses to
+      # replace a newer package without being told to.
+      # Not chocolatey: it carries only recent versions and 6.4.3 is long
+      # gone from it. Not files.jrsoftware.org either -- as of March 2026 that
+      # host keeps only .issig signatures and points at GitHub for the
+      # binaries. The GitHub release asset is immutable, which is what makes
+      # the hash below worth pinning.
+      #
+      # The hash is not ceremony. This step downloads an executable and runs
+      # it as administrator on a machine that then builds our installer; an
+      # unverified binary in that position would be the single most valuable
+      # thing in this pipeline to tamper with.
+      - name: Install Inno Setup 6.4.3
+        shell: pwsh
+        run: |
+          $url  = 'https://github.com/jrsoftware/issrc/releases/download/is-6_4_3/innosetup-6.4.3.exe'
+          $want = 'f3c42116542c4cc57263c5ba6c4feabfc49fe771f2f98a79d2f7628b8762723b'
+          Invoke-WebRequest -Uri $url -OutFile is.exe
+          $got = (Get-FileHash is.exe -Algorithm SHA256).Hash.ToLower()
+          if ($got -ne $want) {
+            Write-Error "Inno Setup hash mismatch`n  expected $want`n  got      $got"
+            exit 1
+          }
+          Write-Host "SHA-256 verified: $got"
+          # /VERYSILENT so it cannot block, and it installs over the runner's
+          # preinstalled newer copy rather than beside it.
+          Start-Process -FilePath .\is.exe -Wait -ArgumentList `
+            '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-'
+          exit 0
+
+      # Proves the pin actually took. Without this, a silently-newer ISCC
+      # would compile the installer fine and nobody would notice the licence
+      # question had been reopened.
+      # Compiles a throwaway script purely to read the version out of ISCC's
+      # own output, because nothing cheaper works. Two attempts failed first
+      # and are recorded so they are not retried: ISCC.exe /? prints
+      # "Inno Setup 6 Command-Line Compiler" with no version, so grepping it
+      # passes on any version including the 6.5+ this pin exists to avoid;
+      # and ISCC.exe has no version resource, so FileVersion reads 0.0.0.0.
+      # The version appears only while compiling -- so this compiles.
+      - name: Assert Inno Setup 6.4.3 is what will compile this
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $iscc)) { Write-Error "ISCC.exe not found at $iscc"; exit 1 }
+          $probe = Join-Path $env:RUNNER_TEMP 'version-probe.iss'
+          # Built from an array rather than a here-string: a PowerShell
+          # here-string terminator has to sit at column 0, which a YAML block
+          # scalar cannot give it.
+          Set-Content -LiteralPath $probe -Value @(
+            '[Setup]',
+            'AppName=VersionProbe',
+            'AppVersion=1.0',
+            'DefaultDirName={autopf}\VersionProbe',
+            ('OutputDir=' + $env:RUNNER_TEMP),
+            'OutputBaseFilename=version-probe'
+          )
+          $out = (& $iscc $probe 2>&1 | Out-String)
+          Write-Host $out
+          if ($out -notmatch 'Inno Setup 6\.4\.3') {
+            Write-Error "ISCC did not report 6.4.3 -- the licensing pin did not take"
+            exit 1
+          }
+          Write-Host 'OK: compiled by Inno Setup 6.4.3'
+
+      # The weights are release assets, not repository files, so they have to
+      # come down before the build can stage them. Every SHA-256 is pinned in
+      # the script: an asset that does not match fails the job rather than
+      # being quietly built into an installer.
+      #
+      # This is what replaced ALLOW_NO_MODELS=1. That flag still exists in
+      # build_windows.bat for a deliberate compile-only check, but using it
+      # here produced an installer that could not process audio, which is a
+      # poor thing to hand someone to test with.
+      - name: Fetch model weights
+        shell: cmd
+        run: |
+          python scripts\fetch_models.py --dest "%RUNNER_TEMP%\ma-models"
+          if errorlevel 1 exit /b 1
+          python scripts\fetch_models.py --dest "%RUNNER_TEMP%\ma-models" --check
+          if errorlevel 1 exit /b 1
+          exit /b 0
+
+      - name: Build exe and compile installer
+        shell: cmd
+        run: scripts\build_windows.bat "%RUNNER_TEMP%\ma-models"
+
+      - name: Show what was produced
+        if: always()
+        shell: cmd
+        run: |
+          dir dist 2>nul
+          dir build\pyinstaller\dist 2>nul
+          exit /b 0
+
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: windows-app-unsigned
+          path: |
+            dist/*.exe
+            build/pyinstaller/dist/*.exe
+          if-no-files-found: error
+          # 90 rather than the 14-day default: these get downloaded onto an
+          # offline test machine, and the first one expired before it could be.
+          retention-days: 90

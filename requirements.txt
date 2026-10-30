@@ -5,5 +5,12 @@ sounddevice
 soxr
 onnxruntime
 
+# Windows only: the routing backend needs Core Audio endpoint enumeration
+# (pycaw) and the COM plumbing to drive IPolicyConfig (comtypes). Marked by
+# platform so a Linux install stays exactly as small as it was -- neither
+# package has any use on Linux, and pycaw does not install there.
+pycaw; sys_platform == "win32"
+comtypes; sys_platform == "win32"
+
 # optional speed-up on Intel/AMD (adds ~180 MB):
 # onnxruntime-openvino
