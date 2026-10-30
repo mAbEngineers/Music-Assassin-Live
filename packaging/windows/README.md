@@ -44,10 +44,42 @@ resolved.** Draft outreach: `vb-audio-permission-email.md` in this
 directory — review, edit, and send it yourself; nothing here sends it for
 you.
 
-Until that's settled, leave `vendor/` empty. The installer still builds and
-works — it just falls back to prompting the user to install VB-CABLE
-manually from vb-audio.com on first run, the same "documented external
-dependency" shape the Linux build uses for PipeWire.
+Until that's settled, leave `vendor/` empty. That is now the *normal* case,
+not a degraded one: the installer downloads VB-CABLE at install time instead
+of carrying it.
+
+## How the driver gets installed
+
+One `.exe`. The installer fetches
+`VBCABLE_Driver_Pack45.zip` from VB-Audio, checks it against a SHA-256 pinned
+in the `.iss`, unpacks it and runs `VBCABLE_Setup_x64.exe -i -h`, then asks
+for the reboot the driver needs. Nothing of VB-Audio's is redistributed, so
+the >10-unit threshold above is never engaged.
+
+Three constraints shaped that, all worth knowing before editing it:
+
+- **Inno Setup 6.4.3 cannot extract `.zip`.** `Extract7ZipArchive` handles
+  `.7z` only; `ExtractArchive` with zip support arrived in 6.5, which this
+  project avoids on licensing grounds (see below). VB-CABLE ships as a zip,
+  so extraction uses a Windows built-in: `tar.exe` (bsdtar, since Windows
+  10/1803), falling back to PowerShell's `Expand-Archive`.
+- **The url is versioned**, so the pin is against a fixed file rather than a
+  moving target. When VB-Audio publishes Pack46 this keeps working against
+  45 rather than silently trusting something new. Bumping it is a deliberate
+  edit: change `CableUrl`, `CableZipName` and `CableSha256` together.
+- **One prompt cannot be removed.** Windows shows its own "install this
+  device software?" dialog for any driver, and VB-Audio have confirmed it
+  cannot be suppressed. `-i -h` silences *their* installer, not the OS. The
+  installer warns the user it is coming so it does not look like a hang.
+
+Every failure path falls back to the old behaviour -- a message box with the
+manual steps and a link -- including a hash mismatch, which is reported as
+"the installer needs updating" rather than retried. An unverified download is
+never run. Offline machines therefore still install the app fine; they just
+have to add the driver by hand, exactly as before.
+
+`BundleVBCable=1` still exists for offline/internal builds and now shares the
+same code path, minus the download.
 
 ## Prerequisites (on a Windows machine — PyInstaller does not cross-compile)
 
