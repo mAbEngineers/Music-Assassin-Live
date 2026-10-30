@@ -10,31 +10,38 @@ measured findings and the list of dead ends all live in
 
 ## Where the code is
 
-**Both feature branches are pushed as of 2026-08-20. The 0.1.4 tag is still
-not cut.**
+**Corrected 2026-10-31; everything below this block about branches that
+predates it is history.** `main` and `feat/separator-spike` are both at
+`043f858` on GitHub: the live-app work (StemgenRT, MRX, the stall fixes, the
+icon, 0.1.5) is on `main`, and the revamped README with it. Branches now:
 
-| Branch | Contents | State |
-|---|---|---|
-| `main` | 0.1.4, green on the offline suite | **25 commits unpushed** |
-| `feature/stereo-output` | B3 stereo rebuild, `wants_stereo`, C1, C2, C3, C4, C7, C8, E1 | **pushed**, 38 ahead of `origin/main` |
-| `feat/separator-spike` | A1 spike + the SpleeterProcessor and its sweep, then B6/B7/C9, then B8/B6b/C10, the C11 panel rebuild, and the 2026-08-20 work below | **pushed**, 58 ahead; contains `feature/stereo-output` |
-| `feature/windows-packaging` | installer scaffolding | ~25 commits stale; cherry-pick forward, never merge (D3.1) |
+| Branch | State |
+|---|---|
+| `main` | = `feat/separator-spike`, `043f858`. 0.1.5 in `__version__`; the last release is still **v0.1.3** and `v0.1.4` exists only as a local tag on `d1cfbe1`. |
+| `feat/separator-spike` | = `main`. Can be deleted whenever convenient. |
+| `dev` | `main` plus `feature/windows-backend`, merged `cf10837` with four conflicts resolved (see the commit message) and `WindowsBackend` brought up to the current `RoutingBackend` (`settling`, `relabel`, and the same single-pick fix `PipeWireBackend` got). Pushed. |
+| `feature/windows-backend` | 11 commits on the old `main`; draft PR #3. Left unmerged to `main` on purpose. Windows is untested on real hardware. |
+| `feature/windows-guard` | Its two commits are inside `windows-backend`; PR #2 closed as superseded. Kept. |
 
-`origin/main` is **still at `06f0ac8`** and no tags have moved — the last
-published release is **v0.1.3**. `main` itself has never been pushed, so the
-25 commits on it reach the remote only through the two feature branches.
+Deleted 2026-10-31 (all had been merged or superseded): `feature/stereo-output`
+(in `main`), `docs/roadmap`, `docs/roadmap-update`, `feature/bench-input-level`,
+`feature/quality-harness`, `fix/*` (four), `refactor/routing-backend`, and
+superseded Windows work: `spike/windows-routing` (`4bd1f1b`; its result, that
+IPolicyConfig works, is in `windows.py`, and `dev` already has a newer copy of
+its script), `feature/windows-packaging-v2` (`369a9ad`) and
+`feature/windows-packaging` (`bc85842`). Those SHAs are noted here in case one is
+needed; the local reflog keeps them for a while, and `git branch NAME SHA`
+brings one back.
 
-**Corrected 2026-10-27.** `main` and `origin/main` are both at `8df4f83`
-now, so the "25 commits unpushed" above is spent; `main` is 0.1.4 and still
-untagged. This branch is at `d4c18cb` — **65 commits ahead of `main`, 5
-ahead of its own remote** (`origin/feat/separator-spike` = `540b6bc`). The
-last published release is still **v0.1.3**. The working tree holds
-**uncommitted work from the 2026-10-27/30 session**, accounted for in "What
-landed 2026-10-27/30" below: `__version__` 0.1.5; a redrawn icon and the
-taskbar fix; the routing fix that follows a single pick in the system menu;
-and a trap-sink label that names (and follows) the real output. `v0.1.4`
-now exists as a **local** tag on `d1cfbe1`, the commit the 2026-08-20 .deb
-was built from; it is not pushed.
+Two things the Windows merge showed, not fixed: the Windows CI build installs
+models through `scripts/fetch_models.py`, whose manifest does not include
+stemgen, so a Windows build will not bundle it; and `windows.py` has no
+`retarget_playback`-style live move beyond a stub, so an output change there
+restarts the stream.
+
+**Old text, kept for the record.** Both feature branches were pushed as of
+2026-08-20; the "25 commits unpushed" figure was spent when `main` and
+`origin/main` both reached `8df4f83`.
 
 **CI ran for the first time and passed on both branches**, with no fix-up
 needed to the apt/pip step. Read what green means before trusting it: the
