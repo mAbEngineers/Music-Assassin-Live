@@ -26,20 +26,36 @@ name: windows build
 # cross-compile and the project has no Windows machine, so CI is the only
 # place this can be answered.
 
+# The path list includes the tests this job runs and the files it reads. That
+# is not tidiness: a fix to tests/test_platform_guard.py was pushed and no run
+# triggered, because only assassin_live/** and the packaging paths were listed
+# -- so the job could go stale against the very tests it exists to run.
 on:
   push:
     paths:
       - 'assassin_live/**'
       - 'packaging/windows/**'
       - 'packaging/icons/*.ico'
+      - 'packaging/model-licenses/**'
+      - 'models/*.json'
+      - 'requirements.txt'
       - 'scripts/build_windows.bat'
+      - 'scripts/fetch_models.py'
+      - 'tests/test_platform_guard.py'
+      - 'tests/test_windows_routing.py'
       - '.github/workflows/windows-build.yml'
   pull_request:
     paths:
       - 'assassin_live/**'
       - 'packaging/windows/**'
       - 'packaging/icons/*.ico'
+      - 'packaging/model-licenses/**'
+      - 'models/*.json'
+      - 'requirements.txt'
       - 'scripts/build_windows.bat'
+      - 'scripts/fetch_models.py'
+      - 'tests/test_platform_guard.py'
+      - 'tests/test_windows_routing.py'
       - '.github/workflows/windows-build.yml'
   workflow_dispatch:
 
