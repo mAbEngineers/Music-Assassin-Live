@@ -59,14 +59,31 @@ def test_reason_names_the_platform_when_no_backend():
         routing.sys.platform = real
 
 
-def test_windows_backend_refuses_on_linux():
-    """The guard has to hold in both directions: the Windows backend is
-    importable here (routing.py imports it unconditionally) and must refuse
-    rather than reach for COM."""
+def test_windows_backend_refuses_without_its_prerequisites():
+    """The guard has to hold on both platforms, and it refuses for a
+    different reason on each -- which is the whole point of
+    unsupported_reason() living on the backend rather than in one shared
+    check. Asserting the wording, not just that something was returned,
+    because a guard that fires for the wrong reason tells the user to fix
+    the wrong thing.
+    """
     reason = windows.WindowsBackend.unsupported_reason()
-    assert reason, "the Windows backend did not refuse on Linux"
-    assert sys.platform in reason, f"reason does not name the platform: {reason!r}"
-    print("  windows on linux-> refused, and names the platform")
+    if sys.platform.startswith("win"):
+        # The platform is fine here; what may be missing is a virtual cable.
+        # A CI runner has none. A developer box might.
+        if reason is None:
+            print("  windows        -> a cable is present, backend usable")
+        else:
+            assert "cable" in reason.lower(), \
+                f"refused on Windows for an unexpected reason: {reason!r}"
+            print("  windows no cable-> refused, and names the cable")
+    else:
+        # routing.py imports this module unconditionally, so it has to refuse
+        # here rather than reach for COM.
+        assert reason, f"the Windows backend did not refuse on {sys.platform}"
+        assert sys.platform in reason, \
+            f"reason does not name the platform: {reason!r}"
+        print("  windows off-win -> refused, and names the platform")
 
 
 def test_reason_names_every_missing_tool():
@@ -152,7 +169,7 @@ def main():
     test_premise()
     test_no_backend_for_unknown_platform()
     test_reason_names_the_platform_when_no_backend()
-    test_windows_backend_refuses_on_linux()
+    test_windows_backend_refuses_without_its_prerequisites()
     test_frozen_build_finds_models_beside_the_exe()
     test_reason_names_every_missing_tool()
     test_pw_dump_survives_a_missing_binary()
