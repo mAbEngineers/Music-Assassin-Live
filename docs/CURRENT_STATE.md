@@ -108,6 +108,32 @@ shows peak backlog, how much was trimmed, and in how many skips. Tested in
 `tests/test_engine_chunked.py`, **not yet by ear** — the user's report came
 from a build without the last fix. Full account in HANDOVER.
 
+## Lag after a stall, in the device buffers (2026-10-31)
+
+A stall of the audio callback or the whole process stays queued in the
+capture device's buffer for good (loopback: one 400 ms stall, 71 ms round trip
+to 452 ms), out of reach of the engine's trims. The first lag measurement in a
+process caused such stalls (+180 to +416 ms); it is now warmed before the
+stream opens. Any remaining stall is detected from PortAudio's buffer times
+and cleared by restarting the stream after 2 s of quiet input. Uncommitted,
+tested with fakes and on private sinks, not yet in real use. HANDOVER "What
+landed 2026-10-31".
+
+## Packaging, icon and the output menu (2026-10-27/30)
+
+0.1.5 is built and was installed by the user (`.deb` bundles stemgen; the
+local tag `v0.1.4` marks the previous build). New icon: the offline icon plus two
+sound waves off the clef (chosen 2026-10-30, `ICON_HANDOVER.md`). Taskbar
+fix (window class matches `StartupWMClass`) confirmed. A pick in the
+system Sound Output menu is now followed (it was never being seen twice).
+"Music Assassin" **cannot be hidden** from that menu on GNOME 46: every
+property tried left it listed, and the one type that hides it
+(`Audio/Sink/Virtual`) cannot be the default. So the entry is labelled with
+the real output ("Music Assassin -> device") and recreated on each switch;
+that is untested by ear. A hidden-sink redesign that moves streams by
+`target.object` is sketched, not started. All of it is uncommitted. Details:
+HANDOVER "What landed 2026-10-27/30"; icon notes in `ICON_HANDOVER.md`.
+
 ## Keep sound effects, live (2026-10-27)
 
 There is now a **"Keep sound effects" switch** on the Processing card, and a

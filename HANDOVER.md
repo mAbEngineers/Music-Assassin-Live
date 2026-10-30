@@ -2,7 +2,7 @@
 
 > **New here? Start with `docs/CURRENT_STATE.md`** — one page on what is true now; this file is the full record.
 
-Updated 2026-10-27. **This file is the running record**, newest sections
+Updated 2026-10-31. **This file is the running record**, newest sections
 first; it was once short and is no longer. It covers where things stand
 *right now* and what to do next. The plan, the reasoning, the
 measured findings and the list of dead ends all live in
@@ -29,17 +29,12 @@ now, so the "25 commits unpushed" above is spent; `main` is 0.1.4 and still
 untagged. This branch is at `d4c18cb` — **65 commits ahead of `main`, 5
 ahead of its own remote** (`origin/feat/separator-spike` = `540b6bc`). The
 last published release is still **v0.1.3**. The working tree holds
-uncommitted work from a second session running in this tree at the same
-time, none of it accounted for below: `__version__` bumped to **0.1.5**; a
-redrawn icon (`scripts/draw_icon.py`, the PNGs under `ui/assets/` and
-`packaging/icons/`) with `StartupWMClass` in the `.desktop` file and a
-matching Tk `className` in `ui/app.py`; and a routing fix that follows a
-single pick in the system menu, which it confirms by how long ago the pick
-was made instead of waiting to see it a second time (`settling` in
-`audio/backends/pipewire.py`, a faster tick in `ui/app.py`, two new cases in
-`tests/test_routing_events.py`). The same `pipewire.py` also carries the
-`device.bus=bluetooth` change, held back on purpose (see the end of "What
-landed 2026-10-26/27").
+**uncommitted work from the 2026-10-27/30 session**, accounted for in "What
+landed 2026-10-27/30" below: `__version__` 0.1.5; a redrawn icon and the
+taskbar fix; the routing fix that follows a single pick in the system menu;
+and a trap-sink label that names (and follows) the real output. `v0.1.4`
+now exists as a **local** tag on `d1cfbe1`, the commit the 2026-08-20 .deb
+was built from; it is not pushed.
 
 **CI ran for the first time and passed on both branches**, with no fix-up
 needed to the apt/pip step. Read what green means before trusting it: the
@@ -1048,6 +1043,200 @@ come from `Music-Assassin/models/sherpa_onnx/sherpa-onnx-spleeter-2stems-int8/`
 (2 × 26 MB — note the `sherpa_onnx/` path component); `scripts/import_models.py`
 now copies them in under the names the registry looks up.
 
+## What landed 2026-10-31 — the delay a stall leaves in the device buffers
+
+Uncommitted. The report: with the app left on in the background, a video
+played after a long while was sometimes behind its picture, and only OFF/ON
+fixed it. The user suggested flushing whenever the input has been flat for
+about 2 s. The app's own queues already are: their screenshot read
+`trimmed 1916696 ms`, output backlog 53 ms. The lag was somewhere the app
+could not see.
+
+**Finding 1: a stall is kept by the capture device, for good.** Measured with
+a duplex stream set up like the engine's, looping clicks through a private
+null sink (output to it, input from its monitor), so the user's audio was
+never touched:
+
+| event | real round trip | PortAudio capture delay |
+|---|---|---|
+| baseline | 71 ms | 23-29 ms |
+| one 400 ms callback stall | 452 ms, permanent | ~390 ms |
+| then a 1 s stall | ~1.4 s | ~1,360 ms |
+| then a 1.5 s whole-process freeze | ~2.9 s | ~2,830 ms |
+
+The capture ring buffer keeps recording during the stall and a duplex stream
+then reads one block per block, so the backlog never drains, and stalls add
+up. None of it is in `_out` or `_dry_out`. Closing and reopening the stream
+clears it (463 ms back to 71 ms). This is the same ratchet as the worker
+stall of 2026-10-26/27, one layer further out.
+
+**Finding 2: the app was causing such stalls itself.** The first
+`LagEstimator.measure()` in a process takes about 2.3 s and holds the GIL for
+up to 141 ms at a time (later calls: ~35 ms, under 4 ms of blocking). It runs
+on its own thread about 1.5 s after sound first arrives, and starved the audio
+callback for 125-240 ms: **+180 and +416 ms of permanent delay** in two runs,
+against ~20 ms with the measurement disabled. The venv is on the sftp mount,
+which may make this first call slower here than in the installed binary;
+that was not measured.
+
+**What changed.**
+- `_warm_lag_fft()` runs one measurement during `_warm_up()`, before the
+  stream opens, once per process. With it the measurement left 13 ms, with no
+  callback gap over 28 ms.
+- Detection: the engine tracks `outputBufferDacTime - inputBufferAdcTime`
+  from every callback (smoothed), against the lowest reading on the stream,
+  skipping the first second (`SETTLE_BLOCKS`; the buffers read low while
+  filling). The sum and not the capture figure alone: on the PipeWire ALSA
+  plugin each side swings ~20 ms in a sawtooth while the sum holds to +-4 ms
+  (60 s against a loopback whose real round trip stayed at 70.7 ms). The floor
+  is not a constant because the healthy round trip differed between runs (71
+  vs 100 ms). `capture_backlog_ms` is the excess.
+- Resync: `needs_resync` is true when the excess is over 150 ms
+  (`CAPTURE_EXCESS_MS`) and the input has been quiet for 2 s
+  (`RESYNC_QUIET_S`), the user's own rule. The GUI tick and the headless loop
+  then call `engine.retarget()` (a fresh stream) and say "back in sync". The
+  details panel shows `capture delay +N ms (M resyncs)`. This covers any stall,
+  including ones from outside the app such as a system freeze or a display
+  waking up, which the user suspected; whether those happen here is unknown.
+- Fallbacks are no longer counted while the input is quiet. The quiet-time
+  trim empties `_out` on purpose, and counting those dry blocks of silence put
+  "struggling (17 blocks dry)" on a paused video and made up much of the
+  user's 353,538 fallbacks.
+- `lag_state` is `not needed` for a `wants_stereo` processor (stemgen), which
+  never measures; it used to say "measuring…" for ever.
+- `RoutingBackend` (base.py) now declares `settling` and `relabel`, which the
+  GUI already used; `test_live_model_swap`'s fake lacked `settling` and had
+  been failing since the output-follow change of 2026-10-28.
+
+**Tests.** `tests/test_capture_resync.py` (new, in `run_tests.sh`): healthy
+stream never resyncs; a 400 ms stall waits for 2 s of quiet; 50 ms of drift is
+ignored; the first second is ignored; zero timing info never resyncs; quiet
+dry blocks are not fallbacks; the warm-up runs; stereo models say not needed.
+Full hardware-free suite passes (the two model-dependent tests skip). Live,
+with the real engine on private null sinks: a 500 ms stall read about +480 ms
+and set `needs_resync` after 2 s of quiet, a retarget brought it back to
+0-20 ms, and 60 s of tone then silence with no stall never triggered it (peak
++30 ms).
+
+**Not verified.** Nothing here has run in the user's session yet. The restart
+costs what `retarget()` costs (warm-up plus stream reopening); since it only
+happens after 2 s of silence it should not be heard, but if sound resumes in
+that moment its first fraction of a second is lost. Whether the user's lag
+came from the lag measurement, from outside stalls, or from Bluetooth (which
+this cannot see) is not established; stemgen, which they were using, never
+runs the lag measurement, so in that session the cause was something else.
+
+## What landed 2026-10-27/30 — the 0.1.5 package, the icon, and the output menu
+
+Nothing here is committed. Seven things, in the order they were done.
+
+**1. 0.1.5 built and installed.** `__version__` is 0.1.5. The `.deb` bundles
+all five redistributable models including `stemgen_rt_vocals` (listing
+checked with `dpkg-deb -c`); `dpdfnet_hr` is still the default. The previous
+release is kept as the local tag `v0.1.4` (`d1cfbe1`); `dist/` still holds
+the old `music-assassin-live_0.1.4_amd64.deb` for rollback. The repo is on an
+sftp mount, so builds run from a copy on local disk:
+
+```
+S=<scratch>/src            # tar the repo (minus .venv .git dist build) there, symlink .venv
+cd $S && BUILD_DIR=$S/build scripts/build_deb.sh
+cp dist/music-assassin-live_0.1.5_amd64.deb ~/
+```
+
+Install with `sudo dpkg -i ~/music-assassin-live_0.1.5_amd64.deb` (needs the
+user's password; an agent cannot do it). Only the first build was copied
+into the repo's `dist/`; later rebuilds overwrite the copy in `~/`. All of
+them are 0.1.5, so the version number does not tell them apart: check the
+file time. The packaged binary has not been exercised by an agent.
+
+**2. New icon (chosen 2026-10-30).** The offline app's icon (cream plate,
+treble clef cut by a red blade) plus two bold crescent waves coming off the
+clef's lower bowl, the inner navy and the outer red, each facing straight out
+from the bowl. Picked as "R1c" from about 25 variants; an earlier indigo
+waveform redesign was replaced by it. `scripts/draw_icon.py` draws the waves
+on `packaging/icons/offline-base-1024.png` (a copy of the offline app's
+`build/icon.png`) and writes the master and the four `ui/assets/icon*.png`.
+Numbers, rejected ideas and notes for the offline repo are in
+`docs/ICON_HANDOVER.md`.
+
+**3. Taskbar icon.** The menu showed the icon but the taskbar did not,
+because GNOME matches a window to its `.desktop` entry by window class and
+neither side said anything. Fixed with `tk.Tk(className="music-assassin-live")`
+and `StartupWMClass=music-assassin-live`; the two must match exactly.
+**Confirmed by the user.**
+
+**4. A pick in the system menu was never followed.** `PipeWireBackend.check()`
+puts the trap straight back as the default when anything steals it, so a
+single pick is seen once, and the old code wanted to see the same candidate
+twice. Audio stayed on the old device while the menu snapped back to the
+trap. The existing test hid it by setting the default back by hand. Now a
+candidate is accepted when it is at least `RETARGET_DEBOUNCE_S` (0.25 s) old
+and still exists in the graph; picking the device already in use does
+nothing; a vanished one is dropped. `settling` reports a pending candidate
+and `_tick` runs every 0.3 s instead of 1 s while one is pending. Tests:
+three new cases in `tests/test_routing_events.py`. **Confirmed by the user**
+("its changing correctly the output devices").
+
+**5. "Music Assassin" in the Sound Output menu cannot be hidden here.** With
+the trap as default, the entry carries the checkmark, so the menu no longer
+says which real device is playing. What was tried, against GNOME Shell 46 on
+this machine, with a Gvc probe (`Gvc.MixerControl`, `output-added`) and test
+sinks made with `pw-cli create-node`:
+
+| attempt | result |
+|---|---|
+| `device.bus=bluetooth` | still listed. The upstream `gvc-mixer-control.c` has that exemption; the installed library does not behave that way |
+| `node.virtual`, `node.hidden`, `pulse.hidden`, `device.api`, `device.form_factor` | still listed |
+| `media.class=Audio/Sink/Virtual` | **hidden**, but `wpctl set-default` refuses it ("not a device node") and setting `default.configured.audio.sink` through `pw-metadata` is ignored, so default-route streams stayed on the real device and never reached the filter |
+
+The `device.bus` change was removed, and the comment in `create_trap_sink`
+now records the above. Setting `node.description` on a live node
+(`pw-cli set-param ... Props`) is silently ignored.
+
+**6. The entry now names the real output.** `create_trap_sink(playing_to=...)`
+labels it "Music Assassin → <device>". Because a live node cannot be
+renamed, `PipeWireBackend.relabel(real)` destroys it and creates it again
+under the same name, makes it default, restores its volume, and `_follow_output`
+then calls `pin_stream` to re-link both of our streams. It only runs when the
+label would change. Checked with the app closed using the real routing and
+engine and a tone: after a switch from AUDIONIC BT to USB the entry was
+renamed, the tone stayed linked to the trap, the capture link moved to the
+new node, and blocks kept flowing; the default was restored on disable.
+**Not checked:** by ear, in the real app, and where the output stream landed
+after the rebuild. Expect a gap of about half a second at each switch, and
+possibly a moment of unfiltered sound while Firefox falls back to the real
+device. The user asked for this and had not yet reported on it. The `.deb`
+with it was built and is at `~/`; whether it was installed is unconfirmed.
+
+**7. Proposed, not started: a hidden sink and no hijack.** The user asked
+for the entry not to show at all. The route that can work: leave the real
+device as the system default, make the filter sink `Audio/Sink/Virtual`
+(hidden), and move each playing stream into it by writing `target.object`
+metadata on the stream node. Tested with `pw-play`: `pw-play --target` was
+ignored by a hidden sink, but `pw-metadata <stream-id> target.object vtrap`
+moved the stream and sound reached it. Costs: a new stream starts on the real
+device and leaks unfiltered audio until it is moved (watch PipeWire events
+rather than polling); every moved stream must be released on OFF, on quit and
+after a kill; and it rewrites `pipewire.py`'s hijack, steal-back, volume
+mirroring and their tests. It would remove most of items 4 and 6. The user was
+told the cost and had not said go.
+
+**Open, from this stretch.**
+- Whether the 0.1.5 engine fixes (item 1 of "What landed 2026-10-26/27") hold
+  in real use is still unreported; read `details`: peak backlog, trimmed,
+  skips.
+- `scripts/dialog.md` and `dialog.md` are untracked and not from this
+  session; leave both alone. `docs/LIVE_SFX_HANDOVER.md` is modified too: the
+  offline repo's movie-mode-dropped edits, synced from
+  `Music-Assassin/docs/LIVE_SFX_HANDOVER.md`. Commit it on its own. Its
+  "Track C" is the offline `HANDOVER.md` §7 label for the causal student
+  (§4.4 here, route (d)).
+- The working tree should be committed in separate pieces: version bump, icon
+  (script, PNGs, `ICON_HANDOVER.md`), taskbar fix (`app.py` className and the
+  `.desktop` line), and routing (`pipewire.py`, `app.py` tick and
+  `_follow_output`, tests). `pipewire.py` and `app.py` each hold hunks from
+  more than one of these.
+
 ## What landed 2026-10-26/27 — the delay a worker stall leaves behind
 
 The reported symptom was audio drifting out of sync during a session, with
@@ -1120,17 +1309,9 @@ the pairing survived. `test_engine_chunked`, `test_live_model_swap`,
   switch, so how much of it this bug caused is unknown.
 - "Processor lag: measuring…" can still fail to complete. Unchanged.
 
-**One change held back on purpose.** `assassin_live/audio/backends/pipewire.py`
-is modified and uncommitted: `create_trap_sink` adds `device.bus=bluetooth`
-to the node spec so GNOME's Sound Output list drops it.
-libgnome-volume-control makes a menu entry for every sink without ports
-*except* one on the bluetooth bus, which it treats as a headset mid
-profile-switch and skips (`gvc-mixer-control.c`, `sync_devices()`); nothing
-else here reads the bus. The menu then shows only real devices and the app
-sits unseen in front of whichever one is chosen. It stays out of a commit
-until the menu has been checked by eye. The file now also holds the other
-session's routing-debounce change (see the branch note at the top), so
-committing either one means splitting the hunks.
+**Superseded 2026-10-28.** The `device.bus=bluetooth` change held back here
+was tested against this machine's GNOME 46 and does **nothing**; it has been
+removed. See "What landed 2026-10-27/30".
 
 ## What landed 2026-10-27 — "keep sound effects" live, and what it costs
 
