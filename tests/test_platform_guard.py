@@ -14,6 +14,7 @@ opened. A packaged Windows build would have shown a crash dialog and nothing
 else.
 """
 
+import os
 import shutil
 import sys
 import subprocess
@@ -23,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from assassin_live.audio import routing                      # noqa: E402
 from assassin_live.audio.backends import pipewire            # noqa: E402
 from assassin_live.audio.backends import windows             # noqa: E402
+from assassin_live import paths                              # noqa: E402
 
 
 def test_premise():
@@ -86,6 +88,37 @@ def test_reason_names_every_missing_tool():
         pipewire.shutil.which = real_which
 
 
+def test_frozen_build_finds_models_beside_the_exe():
+    """The other way a packaged Windows build fails before it does anything.
+
+    The installer lays models out in {app}\\models, beside the .exe. The
+    obvious guess -- the repo-relative fallback in models_dir() -- is wrong
+    for a PyInstaller onefile build, where __file__ points inside the
+    temporary extraction directory, so it would look in _MEIPASS and find
+    nothing. The .deb never hit this because it installs to an absolute
+    SYSTEM_MODELS_DIR, which is why no packaged build had caught it.
+    """
+    assert paths.bundled_models_dir() is None, \
+        "claimed a bundled model dir while running from source"
+    real_frozen = getattr(sys, "frozen", None)
+    real_exe = sys.executable
+    try:
+        sys.frozen = True
+        sys.executable = os.path.join("C:\\", "Program Files", "MAL", "mal.exe")
+        got = paths.bundled_models_dir()
+        assert got is not None, "no bundled model dir in a frozen build"
+        assert got.name == "models", got
+        assert got.parent.name == "MAL", \
+            f"looked beside {got.parent}, not beside the executable"
+        print("  frozen build   -> looks for models beside the .exe")
+    finally:
+        sys.executable = real_exe
+        if real_frozen is None:
+            del sys.frozen
+        else:
+            sys.frozen = real_frozen
+
+
 def _without_subprocess(fn):
     """Run fn() with every subprocess.run raising FileNotFoundError, as it
     does when the binary is not installed."""
@@ -120,6 +153,7 @@ def main():
     test_no_backend_for_unknown_platform()
     test_reason_names_the_platform_when_no_backend()
     test_windows_backend_refuses_on_linux()
+    test_frozen_build_finds_models_beside_the_exe()
     test_reason_names_every_missing_tool()
     test_pw_dump_survives_a_missing_binary()
     test_recover_stale_does_not_raise()

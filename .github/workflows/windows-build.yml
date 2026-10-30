@@ -15,7 +15,11 @@ name: windows build
 #   2. The app still refuses to start cleanly, now because no cable is
 #      installed rather than because no backend exists. Asserted on the
 #      reason text, so a guard that fires for the wrong reason is a failure.
-#   3. PyInstaller bundles it all and ISCC compiles the installer.
+#   3. PyInstaller bundles it all and ISCC compiles the installer, with the
+#      real model weights fetched from the models-v1 release against pinned
+#      SHA-256s. The artifact is therefore an app that can actually process
+#      audio -- unsigned, but not the hollow models-free build this job
+#      produced before.
 #
 # This exists because packaging/windows/ sat unbuilt from 2026-08-13 and
 # nobody could say whether the .iss even parsed. PyInstaller does not
@@ -152,13 +156,27 @@ jobs:
           "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" /? 2>&1 | findstr /i "Inno Setup"
           exit /b 0
 
-      # No .onnx weights in the repo (release assets), hence ALLOW_NO_MODELS.
-      # Enough to compile; deliberately not enough to ship.
+      # The weights are release assets, not repository files, so they have to
+      # come down before the build can stage them. Every SHA-256 is pinned in
+      # the script: an asset that does not match fails the job rather than
+      # being quietly built into an installer.
+      #
+      # This is what replaced ALLOW_NO_MODELS=1. That flag still exists in
+      # build_windows.bat for a deliberate compile-only check, but using it
+      # here produced an installer that could not process audio, which is a
+      # poor thing to hand someone to test with.
+      - name: Fetch model weights
+        shell: cmd
+        run: |
+          python scripts\fetch_models.py --dest "%RUNNER_TEMP%\ma-models"
+          if errorlevel 1 exit /b 1
+          python scripts\fetch_models.py --dest "%RUNNER_TEMP%\ma-models" --check
+          if errorlevel 1 exit /b 1
+          exit /b 0
+
       - name: Build exe and compile installer
         shell: cmd
-        env:
-          ALLOW_NO_MODELS: "1"
-        run: scripts\build_windows.bat
+        run: scripts\build_windows.bat "%RUNNER_TEMP%\ma-models"
 
       - name: Show what was produced
         if: always()
@@ -171,7 +189,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: windows-app-unsigned-no-models
+          name: windows-app-unsigned
           path: |
             dist/*.exe
             build/pyinstaller/dist/*.exe

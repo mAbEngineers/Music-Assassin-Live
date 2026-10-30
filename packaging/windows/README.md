@@ -25,9 +25,13 @@ Windows machine with a cable installed, and no CI runner has either — GitHub
 runners report zero audio endpoints. Until someone runs it, Windows support
 is written and plausible, not proven.
 
+CI builds now carry the real model weights, fetched from the `models-v1`
+release against pinned SHA-256s (`scripts/fetch_models.py`), so the artifact
+is an app that can actually process audio rather than a compile check.
+
 Also still open: the installer prompts for VB-CABLE with a single message box
-rather than downloading it (see the VB-CABLE note below), builds are unsigned,
-and CI builds carry no model weights.
+rather than downloading it (see the VB-CABLE note below), and builds are
+unsigned, so SmartScreen will warn on first run.
 
 ## Before shipping a build with VB-CABLE bundled
 

@@ -30,6 +30,12 @@ REM Usage: scripts\build_windows.bat [MODEL_SOURCE_DIR]
 REM   MODEL_SOURCE_DIR defaults to %MUSIC_ASSASSIN_MODELS%, then
 REM   %USERPROFILE%\.local\share\music-assassin\models (same convention as
 REM   assassin_live\paths.py and scripts\import_models.py).
+REM
+REM   To populate it first:  python scripts\fetch_models.py
+REM   which downloads the redistributable weights from the models-v1 release
+REM   and verifies a pinned SHA-256 for each. That is what CI does; before it
+REM   existed, CI built with ALLOW_NO_MODELS=1 and shipped an installer that
+REM   could not process audio.
 REM Output: dist\music-assassin-live-setup-<version>.exe
 
 setlocal enabledelayedexpansion
