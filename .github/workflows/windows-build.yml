@@ -166,21 +166,23 @@ jobs:
       # Proves the pin actually took. Without this, a silently-newer ISCC
       # would compile the installer fine and nobody would notice the licence
       # question had been reopened.
-      - name: Show which Inno Setup compiled this
-        shell: cmd
+      # Reads the binary's version resource. ISCC.exe /? was tried first and
+      # cannot do this: its banner is "Inno Setup 6 Command-Line Compiler"
+      # with no version in it, so a grep for "Inno Setup" passed on any
+      # version at all -- including the 6.5+ the pin exists to avoid. The
+      # version only appears once ISCC actually compiles something.
+      - name: Assert Inno Setup 6.4.3 is what will compile this
+        shell: pwsh
         run: |
-          "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" /? 2>&1 | findstr /i "Compiler engine version"
-          if errorlevel 1 (
-            echo ERROR: could not read the ISCC version banner >&2
-            exit /b 1
-          )
-          "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" /? 2>&1 | findstr /c:"6.4.3" >nul
-          if errorlevel 1 (
-            echo ERROR: ISCC is not 6.4.3 -- the licensing pin did not take >&2
-            exit /b 1
-          )
-          echo OK: compiled by Inno Setup 6.4.3
-          exit /b 0
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $iscc)) { Write-Error "ISCC.exe not found at $iscc"; exit 1 }
+          $v = (Get-Item $iscc).VersionInfo.FileVersion
+          Write-Host "ISCC.exe FileVersion: $v"
+          if ($v -notlike '6.4.3*') {
+            Write-Error "Inno Setup is $v, not 6.4.3 -- the licensing pin did not take"
+            exit 1
+          }
+          Write-Host "OK: Inno Setup 6.4.3"
 
       # The weights are release assets, not repository files, so they have to
       # come down before the build can stage them. Every SHA-256 is pinned in
