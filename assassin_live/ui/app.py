@@ -117,7 +117,9 @@ class App:
         self.smoothing_ms = saved.get("smoothing_ms", 0.0)
         self._initial_pipeline = saved.get("pipeline", "dpdfnet_hr")
 
-        self.root = tk.Tk()
+        # WM_CLASS must equal the .desktop file's StartupWMClass, or the shell
+        # cannot match this window to its icon and shows a generic one.
+        self.root = tk.Tk(className="music-assassin-live")
         self.root.title("Music Assassin Live")
         self.scale = self._ui_scale()
         self._build_fonts()
