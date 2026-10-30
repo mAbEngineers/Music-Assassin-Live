@@ -95,6 +95,18 @@ def main():
             except Exception:  # noqa: BLE001 — a volume mirror that cannot
                 pass          # run is a wart, not a reason to stop audio.
 
+            # Same as the GUI: a stall left the capture side behind and the
+            # input is quiet, so a fresh stream clears it unheard.
+            if engine.needs_resync and routing.real:
+                behind = engine.capture_backlog_ms
+                try:
+                    engine.retarget(routing.monitor_source, routing.real.name)
+                    print(f"\nback in sync: dropped {behind:.0f} ms of delay")
+                except Exception as e:  # noqa: BLE001
+                    print(f"\nresync failed, stopping: {e}")
+                    break
+                continue
+
             event = routing.check()
             # Both device events are followed. real_sink_replaced was split
             # out from real_sink_changed for the GUI (a vanished device is

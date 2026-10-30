@@ -143,6 +143,7 @@ class App:
         self._fit_window()
         self._prev_xruns = 0
         self._prev_fallbacks = 0
+        self._resyncs = 0
         # A message stays put long enough to be read. Every tick used to
         # overwrite the line, so "feedback loop detected — turned off" was
         # gone inside a second — from the one screen a user is told to read
@@ -923,6 +924,8 @@ class App:
             return f"{self.engine.processor_lag_ms:.1f} ms"
         if state == "unmeasured":
             return "unmeasured (rebuild bypassed)"
+        if state == "not needed":
+            return "not needed"
         return "measuring…"
 
     def _backlog_text(self) -> str:
@@ -1179,6 +1182,24 @@ class App:
                           RED)
                 return
 
+            # A stall left the capture side behind (engine.CAPTURE_EXCESS_MS):
+            # every queue the engine owns is already drained in quiet, but
+            # this one is in the device and only a fresh stream clears it.
+            # Waits for quiet input, so the restart is not heard.
+            if self.engine.needs_resync and self.routing.real:
+                behind = self.engine.capture_backlog_ms
+                try:
+                    self.engine.retarget(self.routing.monitor_source,
+                                         self.routing.real.name)
+                except Exception as e:  # noqa: BLE001 — see retarget handling above
+                    self._turn_off()
+                    self._say(f"resync failed, turned off: {e}", RED)
+                    return
+                self._resyncs += 1
+                self._say(f"back in sync: dropped {behind:.0f} ms of delay "
+                          "a stall left behind", AMBER)
+                return
+
             self._capture_tick += 1
             if self._capture_tick >= self.CAPTURE_CHECK_TICKS:
                 self._capture_tick = 0
@@ -1224,7 +1245,9 @@ class App:
                         ("xruns", s.xruns),
                         ("peak backlog", f"{s.peak_backlog / 48:.0f} ms"),
                         ("trimmed", f"{s.backlog_trimmed / 48:.0f} ms"
-                                    f"  ({s.skips} skips)"))))
+                                    f"  ({s.skips} skips)"),
+                        ("capture delay", f"+{self.engine.capture_backlog_ms:.0f} ms"
+                                          f"  ({self._resyncs} resyncs)"))))
         elif not self.enabled and not self._holding():
             self._say("idle", hold=False)
             self.details.config(text="")

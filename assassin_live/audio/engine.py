@@ -84,11 +84,52 @@ STANDING_KEEP = 2 * BLOCK
 STANDING_RUN = 20            # 400 ms above the limit before acting
 SKIP_XFADE = 192             # 4 ms
 CHUNKED_BLOCKS = 4           # a processor holding more than this answers in chunks
+# A stall upstream of every queue above. When the audio thread (or the whole
+# process) is held up, the capture device keeps recording into its own ring
+# buffer, and a duplex stream then reads one block per block from it, so the
+# backlog never drains. Measured with a loopback through a null sink: one
+# 400 ms callback stall took the round trip from 71 ms to 452 ms for good, a
+# 1.5 s process freeze to ~2.9 s, and they add up. None of it is in _out or
+# _dry_out, so the trims above cannot reach it; only a fresh stream does.
+# PortAudio reports it in every callback (outputBufferDacTime -
+# inputBufferAdcTime: the audio held in the device buffers), so the supervisor restarts the stream once the input has been quiet long
+# enough that the restart cannot be heard. The floor is the lowest reading
+# seen, not a constant: the healthy round trip differed between runs (71 vs
+# 100 ms).
+CAPTURE_EXCESS_MS = 150.0    # device delay above the floor that counts as a stall
+SETTLE_BLOCKS = 50           # 1 s: a new stream's buffers read low while filling
+RESYNC_QUIET_S = 2.0         # quiet input needed before restarting the stream
 
 LIMITER_THRESHOLD = 0.8  # below this, output passes through untouched
 LIMITER_CEILING = 0.98   # peaks above threshold compress toward this, never past it
 
 _EMPTY_STEREO = np.zeros((0, 2), dtype=np.float32)
+
+
+_lag_fft_warm = False
+
+
+def _warm_lag_fft() -> None:
+    """Pay the lag measurement's first-call cost before a stream exists.
+
+    The first LagEstimator.measure() in a process took 2.3 s and held the
+    GIL for up to 141 ms at a stretch (later calls: ~35 ms, under 4 ms).
+    Run from its thread mid-stream, that starved the audio callback for
+    125-240 ms at a time, about 1.5 s after sound first arrived, and every
+    such gap stays queued in the capture buffer for the rest of the session
+    (CAPTURE_EXCESS_MS): +180 to +416 ms measured, against ~20 ms with the
+    measurement off. Once per process; the cost is a cache, not per model.
+    """
+    global _lag_fft_warm
+    if _lag_fft_warm:
+        return
+    noise = np.random.default_rng(0).standard_normal(
+        int(1.5 * SAMPLE_RATE)).astype(np.float32)
+    try:
+        LagEstimator(SAMPLE_RATE).measure(noise, noise)
+    except Exception:  # noqa: BLE001 — a warm-up must never stop a start
+        return
+    _lag_fft_warm = True
 
 
 def _soft_limit(x: np.ndarray) -> np.ndarray:
@@ -221,6 +262,9 @@ class AudioEngine:
         # Dry dropped by the callback at its cap -> the matching wet has not
         # been produced yet, so the callback skips that much of it later.
         self._quiet_run = 0      # consecutive quiet input blocks, callback-only
+        self._cap_lat = None     # smoothed device delay, s (callback writes)
+        self._cap_floor = None   # lowest smoothed device delay this stream
+        self._cap_blocks = 0     # callbacks since the stream started
         self._standing_run = 0   # consecutive blocks above STANDING_LIMIT
         self._pending_skip = 0   # samples to skip at the next callback
         self._dry_drop = 0       # written by worker, consumed by callback
@@ -264,6 +308,7 @@ class AudioEngine:
         """Run silence through the processor so the first real block meets a
         hot runtime. Errors are swallowed: a processor that dislikes being
         warmed must not stop the stream from opening."""
+        _warm_lag_fft()
         proc, down, up = self._runtime
         n = int(SAMPLE_RATE * seconds)
         try:
@@ -453,7 +498,9 @@ class AudioEngine:
 
     @property
     def lag_state(self) -> str:
-        """`measured`, `measuring`, or `unmeasured` — see audio/lag.py.
+        """`measured`, `measuring`, `unmeasured`, or `not needed` (a
+        wants_stereo processor, whose output is count-aligned and never
+        measured) — see audio/lag.py.
 
         `unmeasured` is a real outcome, not an error: the correction is
         skipped and the stereo rebuild stays bypassed, which is the same
@@ -463,6 +510,8 @@ class AudioEngine:
         """
         if self._mask_lag is not None:
             return "measured"
+        if self._runtime[0].wants_stereo:
+            return "not needed"   # count-aligned output; nothing is measured
         return "unmeasured" if self._lag_given_up else "measuring"
 
     def recent_levels(self) -> list:
@@ -473,6 +522,49 @@ class AudioEngine:
     def recent_input_levels(self) -> list:
         """The same for the captured input, before any processing."""
         return list(self._levels_in)
+
+    def _track_capture_delay(self, t) -> None:
+        """Callback thread. Follow how much audio the device buffers hold,
+        capture plus playback; see CAPTURE_EXCESS_MS.
+
+        The sum, not the capture figure alone: on the PipeWire ALSA plugin
+        each side swings by ~20 ms in a sawtooth while their sum holds to
+        +-4 ms (measured over 60 s against a loopback click whose real round
+        trip stayed at 70.7 ms throughout). The first second of a stream is
+        skipped because the buffers are still filling and read low. A host
+        API that does not fill the times in reports zeros, which are skipped.
+        """
+        self._cap_blocks += 1
+        if self._cap_blocks < SETTLE_BLOCKS:
+            return
+        try:
+            lat = t.outputBufferDacTime - t.inputBufferAdcTime
+            valid = t.inputBufferAdcTime > 0 and t.outputBufferDacTime > 0
+        except Exception:  # noqa: BLE001 — no timing info, nothing to track
+            return
+        if not (valid and 0.0 <= lat < 30.0):
+            return
+        ema = lat if self._cap_lat is None else 0.9 * self._cap_lat + 0.1 * lat
+        self._cap_lat = ema
+        if self._cap_floor is None or ema < self._cap_floor:
+            self._cap_floor = ema
+
+    @property
+    def capture_backlog_ms(self) -> float:
+        """How much more audio the device buffers hold than their lowest
+        reading on this stream, in ms. Healthy is within a few ms of 0; a
+        stall shows up here and nowhere else."""
+        if self._cap_lat is None or self._cap_floor is None:
+            return 0.0
+        return (self._cap_lat - self._cap_floor) * 1000.0
+
+    @property
+    def needs_resync(self) -> bool:
+        """A stall left the capture side behind, and the input has been
+        quiet long enough that restarting the stream will not be heard."""
+        quiet_s = self._quiet_run * BLOCK / SAMPLE_RATE
+        return (self.capture_backlog_ms > CAPTURE_EXCESS_MS
+                and quiet_s >= RESYNC_QUIET_S)
 
     @property
     def stream_ok(self) -> bool:
@@ -579,6 +671,10 @@ class AudioEngine:
         self._measuring = False
         self._levels.clear()
         self._levels_in.clear()
+        self._quiet_run = 0
+        self._cap_lat = None
+        self._cap_floor = None
+        self._cap_blocks = 0
         self._running = True
         self._worker = threading.Thread(target=self._work, daemon=True)
         self._worker.start()
@@ -671,6 +767,7 @@ class AudioEngine:
         if status:
             self.stats.xruns += 1
         self.stats.blocks_in += 1
+        self._track_capture_delay(_time)
         try:
             self._callback_body(indata, outdata, frames)
         except Exception:  # noqa: BLE001 — sounddevice silently kills the
@@ -792,7 +889,10 @@ class AudioEngine:
         wet[:take] = wet_st
         if take < frames:
             wet[take:] = dry[take:]  # underrun tail: fall back to dry
-            if self._wet_gain > 0.01:
+            # Not while the input is quiet: the quiet-time trim empties _out
+            # on purpose, a dry block of silence leaks nothing, and counting
+            # it put "struggling" on the status line of a paused video.
+            if self._wet_gain > 0.01 and self._quiet_run == 0:
                 self.stats.fallback_blocks += 1
 
         # per-block linear ramp toward target — click-free toggle

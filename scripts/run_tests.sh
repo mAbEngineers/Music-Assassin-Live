@@ -26,6 +26,7 @@ PY="${PY:-.venv/bin/python}"
 HARDWARE_FREE=(
   test_engine_recovery      # callback crash containment, soft limiter
   test_engine_chunked       # FIFO caps vs chunked processors, lockstep on trim
+  test_capture_resync       # a stall held in the device buffers, and the resync
   test_mask_shaper          # suppression floor + smoothing never amplify, count-aligned
   test_stereo_rebuild       # B3's mask rebuild + measured latency (C4/C7)
   test_capture_diagnosis    # C8, incl. the pulse-proxied pid trap
