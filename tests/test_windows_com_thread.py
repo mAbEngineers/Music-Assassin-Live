@@ -16,12 +16,19 @@ a worker thread so the Tk loop keeps painting, which would mean
                            and returns [], and the backend correctly
                            concludes there is nothing to play to.
 
-HOW MUCH OF THAT IS ESTABLISHED: the thread layout is real and the swallow is
-real. Whether a bare thread actually fails is NOT -- on the GitHub runner it
-succeeded (see test_bare_thread_is_the_hazard), because that depends on the
-process apartment. So _ensure_com() is here as correctness, not as a
-diagnosed fix, and the user's fault may yet be one of the other three ways
-enable() returns None. last_enable_error exists to settle that.
+CONFIRMED on Windows, 2026-10-31: a thread that never initialised COM fails
+with OSError [WinError -2147221008] "CoInitialize has not been called", and
+_ensure_com() clears it.
+
+ONE TRAP WORTH KNOWING, because it made this look unreproducible for a
+while: whichever thread imports comtypes first gets the apartment. An
+earlier version of this file probed from the worker thread before anything
+had touched comtypes, so comtypes' import-time CoInitialize ran *on that
+worker* and it worked -- the opposite of the app, where the startup cable
+check touches COM on the main thread and only then does ui/app.py run
+enable() on a worker. test_report_the_apartment now imports comtypes on the
+main thread first, which is what puts this file in the app's real
+conditions. Change the order and this stops testing anything.
 
 What this file is still worth: CoreAudio swallows exceptions by design -- a
 backend that throws while putting the user's device back is worse than one
@@ -91,15 +98,16 @@ def test_bare_thread_is_the_hazard():
     """Informational, deliberately not an assertion.
 
     Whether a bare thread can use COM depends on the process apartment (see
-    _apartment_note), so this legitimately differs between machines and must
-    not fail a build either way. It is printed because it says whether
-    _ensure_com was load-bearing *here*.
+    _apartment_note) and on which thread imported comtypes first, so it can
+    legitimately differ between machines and must not fail a build either
+    way. It is printed because it says whether _ensure_com is load-bearing
+    *here*.
 
-    On the GitHub runner, 2026-10-31: it worked. So this check does not
-    reproduce the fault reported from the user's laptop, and _ensure_com
-    stands as correctness rather than as a proven fix for that report. What
-    identifies the real cause there is WindowsBackend.last_enable_error,
-    which now distinguishes the four ways enable() can fail.
+    On the GitHub runner, 2026-10-31, with comtypes 1.4.17 and
+    test_report_the_apartment having claimed the main thread's apartment
+    first: it fails with CO_E_NOTINITIALIZED, which is the app's own
+    situation. If it ever prints "worked", check that nothing above it has
+    stopped importing comtypes on the main thread before this runs.
     """
     ok, detail = _on_fresh_thread(_probe)
     if ok:

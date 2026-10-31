@@ -134,20 +134,22 @@ def _ensure_com() -> None:
     """Initialise COM on the calling thread, once per thread.
 
     comtypes calls CoInitialize() for the thread that imports it and no
-    other. Whether that actually breaks a thread we spawned depends on the
-    process apartment: apartment-threaded (comtypes' default) leaves such a
-    thread with no apartment and COM calls fail with CO_E_NOTINITIALIZED,
-    while in an MTA Windows folds an uninitialised thread in implicitly and
-    everything works. A GitHub runner takes the forgiving path, so this is
-    not reliably reproducible there (tests/test_windows_com_thread.py).
+    other, and comtypes' default is apartment-threaded, so a thread we
+    spawned has no apartment and every COM call there fails with
+    CO_E_NOTINITIALIZED -- confirmed on Windows with comtypes 1.4.17,
+    OSError [WinError -2147221008] (tests/test_windows_com_thread.py).
 
-    It matters because ui/app.py runs enable()/disable() on a worker thread
-    so the Tk loop keeps painting, and render_endpoints() swallows errors and
-    returns [] -- which the backend then correctly reads as "nothing to play
-    to". On the machine where that is the apartment, the startup cable check
-    passes on the main thread and the toggle fails on the worker, which is
-    indistinguishable from having no speakers. Initialising per thread costs
-    nothing and removes the question.
+    That is the "no hardware audio sink found" report. ui/app.py runs
+    enable()/disable() on a worker thread so the Tk loop keeps painting, and
+    render_endpoints() swallows errors and returns [], which the backend then
+    correctly reads as "nothing to play to". The startup cable check runs on
+    the main thread and passes; the toggle runs on a worker and sees an empty
+    machine. Indistinguishable, from the outside, from having no speakers.
+
+    Note the asymmetry is an import-order accident, not a rule: whichever
+    thread imports comtypes first gets the apartment, and here that is always
+    the main thread because the startup check touches COM before any worker
+    exists. Initialising per thread removes the dependence entirely.
 
     Called from every CoreAudio entry point rather than from the threads
     themselves: the threads belong to the UI and the engine, and neither
