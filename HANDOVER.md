@@ -17,10 +17,10 @@ icon, 0.1.5) is on `main`, and the revamped README with it. Branches now:
 
 | Branch | State |
 |---|---|
-| `feat/stemgen-default` | Off `main`: **`stemgen` is now the default pipeline** (GUI first run, saved-settings fallback, CLI `--model`), README and docs updated. Not yet merged or pushed. |
+| `feat/stemgen-default` | Off `main`, one commit `31c5486`: **`stemgen` is the default pipeline** (GUI first run, saved-settings fallback, CLI `--model`), README and docs updated. Merged into `dev` (`3788c99`). **Not pushed, not in `main` yet.** |
 | `main` | = `feat/separator-spike`, `043f858`. 0.1.5 in `__version__`; the last release is still **v0.1.3** and `v0.1.4` exists only as a local tag on `d1cfbe1`. |
-| `feat/separator-spike` | = `main`. Can be deleted whenever convenient. |
-| `dev` | `main` plus `feature/windows-backend`, merged `cf10837` with four conflicts resolved (see the commit message) and `WindowsBackend` brought up to the current `RoutingBackend` (`settling`, `relabel`, and the same single-pick fix `PipeWireBackend` got). Pushed. |
+| `feat/separator-spike` | = `main` (`06e696c`), already merged. Work moved to `feat/stemgen-default`; delete whenever convenient. |
+| `dev` | `main` plus `feature/windows-backend` (merged `cf10837`) plus `feat/stemgen-default` (`3788c99`); the Windows merge with four conflicts resolved (see the commit message) and `WindowsBackend` brought up to the current `RoutingBackend` (`settling`, `relabel`, and the same single-pick fix `PipeWireBackend` got). Pushed. |
 | `feature/windows-backend` | 11 commits on the old `main`; draft PR #3. Left unmerged to `main` on purpose. Windows is untested on real hardware. |
 | `feature/windows-guard` | Its two commits are inside `windows-backend`; PR #2 closed as superseded. Kept. |
 
@@ -1051,6 +1051,36 @@ Use `~/Documents/venvs/assassin_venv_v0.4.4_cpu/bin/python` (1.13.4). Models
 come from `Music-Assassin/models/sherpa_onnx/sherpa-onnx-spleeter-2stems-int8/`
 (2 × 26 MB — note the `sherpa_onnx/` path component); `scripts/import_models.py`
 now copies them in under the names the registry looks up.
+
+## What landed 2026-10-31 (late): stemgen is the default
+
+- **Change.** `stemgen` is now the default pipeline: `_pick_default_model` and
+  the saved-settings fallback in `ui/app.py`, and `--model` in `__main__.py`.
+  If stemgen is not installed the GUI falls back to `dpdfnet_hr`, then `gtcrn`.
+  A pipeline already saved in the user's settings still wins, so an existing
+  install needs one pick in the dropdown to switch.
+- **Why.** User decision. The measured trade (CURRENT_STATE, 234 pairs):
+  stemgen keeps the voice and the stereo image and leaves about 22 dB of music;
+  `dpdfnet_hr` removes about 41 dB but damages some voices and collapses stereo.
+- **Docs updated:** README, ROADMAP, CURRENT_STATE, RESEARCH_IDEAS and this file.
+  Older dated entries that say "`dpdfnet_hr` stays default" are history and are
+  marked as such, not rewritten.
+- **Deliberately not changed:** `tests/bench_quality.py` `DEFAULT_CFG` stays on
+  `dpdfnet_hr`, so new benchmark runs remain comparable with the recorded
+  numbers. Pass `--model stemgen` there to bench the new default.
+- **Windows.** A Windows build will not bundle stemgen yet (its
+  `scripts/fetch_models.py` manifest lacks it), so there the fallback to
+  `dpdfnet_hr` applies. Fix that before shipping Windows. The Windows to-do
+  list is in the 2026-10-31 hand-over given in conversation; the durable
+  record is `packaging/windows/HANDOVER.md` plus the notes above.
+- **Not done / waiting on the user:** push `dev` and `feat/stemgen-default`;
+  fast-forward `main`; delete `feat/separator-spike`; build and install a new
+  .deb (the installed 0.1.5 still defaults to `dpdfnet_hr`); real-use check of
+  the resync and output label; hidden-sink redesign (proposed, not started);
+  v0.1.4 and v0.1.5 tags and releases not pushed.
+- **Environment reminders.** Repo is on an sftp mount: write commit messages to
+  a local file and use `git commit -F`, with `commit-tree` plus `update-ref` as
+  the fallback; build the .deb from a local copy with `BUILD_DIR`.
 
 ## What landed 2026-10-31 — the delay a stall leaves in the device buffers
 
