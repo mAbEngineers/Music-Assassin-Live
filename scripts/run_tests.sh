@@ -35,6 +35,8 @@ HARDWARE_FREE=(
   test_routing_events       # check()'s four outcomes (C1/C3)
   test_status_line          # C4's health word
   test_volume_mirror        # C2's mirror
+  test_platform_guard       # the startup refusal, and the crash it replaces
+  test_windows_routing      # D3.3's state machine, with COM faked out
 )
 
 fail=0
