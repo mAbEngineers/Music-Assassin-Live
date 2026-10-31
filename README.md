@@ -7,11 +7,11 @@
   <a href="https://github.com/mAbEngineers/music-assassin-live/releases/latest"><img src="https://img.shields.io/github/v/release/mAbEngineers/music-assassin-live" alt="Latest release"></a>
   <a href="https://github.com/mAbEngineers/music-assassin-live/releases"><img src="https://img.shields.io/github/downloads/mAbEngineers/music-assassin-live/total" alt="Downloads"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/mAbEngineers/music-assassin-live" alt="License: MIT"></a>
-  <a href="#requirements"><img src="https://img.shields.io/badge/platform-Linux%20%28PipeWire%29-blue" alt="Platform"></a>
+  <a href="#requirements"><img src="https://img.shields.io/badge/platform-Linux%20%7C%20Windows-blue" alt="Platform"></a>
 </p>
 
 <p align="center">
-  <strong>System-wide, realtime music removal for Linux — works like a volume booster.</strong><br>
+  <strong>System-wide, realtime music removal for Linux and Windows — works like a volume booster.</strong><br>
   One toggle, and <em>everything</em> the device plays gets background music stripped before it reaches the speaker.
 </p>
 
@@ -36,13 +36,13 @@
 ## Features
 
 - **One toggle, every app** — browser, Spotify, VLC, whatever's playing. No per-app setup, no manual audio routing.
-- **PipeWire-native** — routes with `pw-cli` / `wpctl` / `pw-dump` only; no `pactl` dependency.
-- **Crash-safe** — quitting, crashing, or killing the process restores your original default sink; `--recover` cleans up stale state at startup.
+- **Linux and Windows** — one app, one engine, one model library; only the audio routing differs per OS. Linux uses PipeWire directly (`pw-cli` / `wpctl` / `pw-dump`, no `pactl`). Windows routes through the free VB-CABLE virtual audio device, which setup installs for you.
+- **Crash-safe** — quitting, crashing, or killing the process hands your original output device back; `--recover` cleans up stale state at startup. On Windows a crash also writes a report you can attach to a bug.
 - **A real model library** — five interchangeable ONNX models behind one processor interface, from a 2 MB speech-enhancer up to a realtime vocal/music separator. See [Model library](#model-library).
 - **Mid/side stereo pre-filter** — an optional, model-independent lever that targets wide (non-centered) content using stereo panning instead of spectral guessing. Stacks with any model.
 - **Benchmarked, not vibes-based** — `bench_quality.py` scores every model/filter/mix combination against ground-truth stems on a dozen+ metrics — suppression, vocal damage, artifacts, latency — so a change shows up as a number moving, not a feeling.
 - **Lightweight** — no torch; the whole Python stack is ≈100 MB.
-- **One `.deb`** — models included, `apt install` and go.
+- **One installer per platform** — a `.deb` on Ubuntu/Debian, a `.exe` on Windows. Models included, no manual setup.
 
 ## How it works
 
@@ -58,6 +58,21 @@ streaming engine: 20 ms blocks → ONNX model → speaker
 
 Turning OFF (or quitting, or crashing — recovery runs at startup) restores
 the previous default sink.
+
+**On Windows** Windows has no way to insert a filter into the audio path, so
+the trap is a virtual cable instead of a null sink. The app makes VB-CABLE's
+"CABLE Input" the system default, captures its other end, and plays the
+processed audio to your real speakers:
+
+```
+apps → "CABLE Input" (default while ON) → CABLE Output (capture)
+     → streaming engine → ONNX model → your real speakers
+```
+
+The routing layer is the only platform-specific code. `routing.py` picks
+`backends/pipewire.py` or `backends/windows.py`; both satisfy the same
+`RoutingBackend` protocol, so the engine, models and UI never know which OS
+they are on.
 
 <details>
 <summary><strong>Full pipeline ▸</strong> mono speech-enhancer lane vs. stereo separator lane, FIFOs, optional stages</summary>
@@ -101,11 +116,25 @@ flowchart LR
 
 ## Requirements
 
-- Linux with PipeWire + WirePlumber (tested: PipeWire 1.0.5, Ubuntu 24.04)
+**Linux**
+- PipeWire + WirePlumber (tested: PipeWire 1.0.5, Ubuntu 24.04)
+
+**Windows**
+- Windows 10 or 11, 64-bit (tested: Windows 10 build 19044)
+- [VB-CABLE](https://vb-audio.com/Cable/) — the installer offers to download and install it for you (checksum-verified, not bundled). A reboot is needed after it installs.
+
+**Running from source (either OS)**
 - Python 3.10+
-- `pip install -r requirements.txt` (numpy, sounddevice, soxr, onnxruntime)
+- `pip install -r requirements.txt` (numpy, sounddevice, soxr, onnxruntime; plus pycaw and comtypes on Windows, installed automatically)
 
 ## Quick start
+
+**Just want to use it?** Download from the [latest release](https://github.com/mAbEngineers/music-assassin-live/releases/latest):
+
+- **Ubuntu / Debian:** `sudo apt install ./music-assassin-live_*_amd64.deb`
+- **Windows:** run `music-assassin-live-setup-*.exe`. Windows will warn about an unknown publisher because the installer is not code-signed yet; choose *More info*, then *Run anyway*. Tick the VB-CABLE option when asked, and reboot afterwards.
+
+**From source:**
 
 ```bash
 python -m venv .venv && .venv/bin/pip install -r requirements.txt
@@ -359,14 +388,30 @@ step. `speechdenoiser` is excluded (its upstream licence is unresolved, see
 `models/README.md`); add it yourself in
 `~/.local/share/music-assassin/models/` if you want it.
 
-Windows builds exist (`scripts/build_windows.bat`, compiled on every push
-by `.github/workflows/windows-build.yml`) and the Windows routing backend is
-written (`assassin_live/audio/backends/windows.py`): it traps through a
-virtual audio cable such as VB-CABLE, which the user installs. What has
-**not** happened is an end-to-end run on real Windows hardware — CI runners
-have no audio endpoints, so no machine has yet played audio through it.
-Treat Windows as untested rather than finished. Mobile packaging is still
-not possible — see `docs/ARCHITECTURE.md` §6 (Platform Reality Check).
+### Windows
+
+```bat
+scripts\build_windows.bat   REM -> dist\music-assassin-live-setup-<version>.exe
+```
+
+A PyInstaller binary wrapped in an Inno Setup installer, built on every push
+by `.github/workflows/windows-build.yml`. Models are installed next to the
+program. The installer downloads VB-CABLE at install time against a pinned
+SHA-256 rather than bundling it, because VB-Audio's terms require a
+distribution agreement for redistribution. It is **unsigned**, so SmartScreen
+and UAC will show "unknown publisher"; that is the missing certificate, not a
+fault.
+
+Uninstalling the app hands your speakers back first, but leaves VB-CABLE
+installed; remove it from *Apps & features* if you want it gone. If the app
+ever crashes, the report is at `%USERPROFILE%\.local\state\music-assassin\crash.log`.
+
+The full record (how the installer works, what the first hardware runs found,
+the signing options and their costs) is in
+[`packaging/windows/README.md`](packaging/windows/README.md).
+
+Mobile packaging is still not possible — see `docs/ARCHITECTURE.md` §6
+(Platform Reality Check).
 
 ## Status
 
@@ -379,6 +424,9 @@ not possible — see `docs/ARCHITECTURE.md` §6 (Platform Reality Check).
       removed from output, speech passes, clean sink restore on exit)
 - [ ] Tray icon, autostart, first-run model download
 - [x] `.deb` packaging (`scripts/build_deb.sh`) — models bundled, ready to run after install
+- [x] Windows — routing backend, installer, CI; audio verified on real hardware (v0.1.5)
+- [ ] Windows: a crash after some time in a session is reported but not yet explained (`crash.log`)
+- [ ] Windows: code signing (decided to defer; see `packaging/windows/README.md`)
 - [ ] PyInstaller → AppImage packaging
 - [ ] Native LADSPA port (see `docs/ARCHITECTURE.md` Phase 3)
 

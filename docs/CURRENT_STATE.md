@@ -4,17 +4,19 @@ One page and kept short on purpose. `ROADMAP.md` (≈2,250 lines) and
 `HANDOVER.md` (≈1,300) hold the full record, including corrections on top of
 corrections. This page says what is true **now** and where to read further.
 When it disagrees with them, check the dates; this page was written
-2026-10-23.
+2026-10-23 and its "Where things stand" block brought up to date 2026-10-31.
 
 ## Where things stand
 
-- **Released:** v0.1.3, Linux/PipeWire only.
-- **`main`** (= `origin/main`, `8df4f83`) is 0.1.4 but untagged. The tag is
-  blocked by total suppression: quiet input into `dpdfnet_hr` comes out
-  silent (HANDOVER "What gates the 0.1.4 tag"; fix is ROADMAP B10).
-- **This branch, `feat/separator-spike`:** 42 commits ahead of `main` and 8
-  ahead of its own remote. Everything below is committed locally
-  (`b2687aa`, `d77ac08`); nothing is pushed.
+- **Released:** **v0.1.5** (2026-10-31), the first release with Windows: a
+  `.deb` for Linux and an unsigned `.exe` installer for Windows. v0.1.4 is
+  published too, as a Linux `.deb`.
+- **`main` and `dev`** are the same commit, and `feat/separator-spike` is gone.
+  `stemgen` is the default pipeline.
+- **Open:** the Windows crash after a while is reported to `crash.log` but not
+  yet explained (see the Windows section below); Windows code signing is
+  deferred; the install-or-repair prompt in setup has had one real-machine
+  run only.
 
 ## The finding that matters
 

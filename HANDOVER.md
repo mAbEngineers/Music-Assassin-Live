@@ -10,15 +10,19 @@ measured findings and the list of dead ends all live in
 
 ## Where the code is
 
-**Corrected 2026-10-31; everything below this block about branches that
-predates it is history.** `main` is at `939d307` on GitHub
+**Updated 2026-10-31 evening: `main` and `dev` are both at `1e35246`
+(then docs commits), v0.1.5 is released with the `.deb` and the Windows
+`.exe`, and v0.1.4 has its own release. The table below is the earlier
+2026-10-31 snapshot and its `main` SHA and "untested" wording are superseded.**
+Corrected 2026-10-31; everything below this block about branches that
+predates it is history. `main` is at `939d307` on GitHub
 (was `043f858`): the live-app work (StemgenRT, MRX, the stall fixes, the
 icon, 0.1.5) is on `main`, and the revamped README with it. Branches now:
 
 | Branch | State |
 |---|---|
 | `feat/stemgen-default` | `stemgen` as default pipeline (`31c5486`, handover `7090005`). Merged into `main` and `dev`, pushed. Can be deleted. |
-| `main` | `939d307`, pushed 2026-10-31. **Contains the Windows work too**: the stemgen branch had `origin/dev` merged into it by another session at 12:09, and `main` was fast-forwarded to that, so `feature/windows-backend` (and so PR #3) is effectively in. Kept on purpose after the user said not to revert. Windows is still untested on real hardware; the README says so. 0.1.5 in `__version__`; last release still **v0.1.3**, `v0.1.4` only a local tag on `d1cfbe1`. |
+| `main` | `939d307`, pushed 2026-10-31. **Contains the Windows work too**: the stemgen branch had `origin/dev` merged into it by another session at 12:09, and `main` was fast-forwarded to that, so `feature/windows-backend` (and so PR #3) is effectively in. Kept on purpose after the user said not to revert. Windows has since been run on real hardware and is released (v0.1.5). Latest release is now **v0.1.5**; `v0.1.4` is published on `d1cfbe1`. |
 | `feat/separator-spike` | Deleted 2026-10-31 (local and GitHub); it equalled the old `main`, `06e696c`. |
 | `dev` | Same tree as `main` (`f4c9b51`, merges `main` in). Where Windows work continues. Pushed. |
 | `feature/windows-backend` | 11 commits, now inside `main` and `dev`. Draft PR #3 is effectively merged; close or mark it as such on GitHub. |

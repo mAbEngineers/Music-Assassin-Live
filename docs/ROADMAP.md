@@ -1994,6 +1994,8 @@ Then make `routing.py` the real platform switch its docstring already sketches.
 
 #### D3.3 Write `WindowsBackend` — days, scope separately
 
+**Done 2026-10-31** (`backends/windows.py`, 56 hardware-free tests, audio confirmed on Windows 10). The first hardware runs found four faults CI could not reach; see `packaging/windows/README.md`.
+
 Trap sink becomes **CABLE Input** (render endpoint), capture becomes **CABLE
 Output** — a real capture endpoint, so an ordinary input stream and no
 loopback anywhere.
@@ -2014,6 +2016,8 @@ New dependency: `pycaw` (MIT) + `comtypes`, gated
 `pycaw; sys_platform == "win32"`.
 
 #### D3.4 Getting VB-CABLE onto the machine
+
+**Done 2026-10-31.** The installer downloads the driver pack against a pinned SHA-256 and runs it elevated; `--check-cable` makes setup and the app agree on whether a cable is really present.
 
 Manual install is ~7 steps and about three minutes, and two of them fail
 silently: the download is a **ZIP, not an installer** (running the `.exe` from
@@ -2071,6 +2075,8 @@ next to it. Same licensing exposure as D4's bundled variant, worse UX than
 either alternative.
 
 #### D3.5 Build and CI — both, decided 2026-08-20
+
+**Done.** `.github/workflows/windows-build.yml` builds the exe, compiles the installer and runs the Windows tests on every push; v0.1.5 shipped its output.
 
 - GitHub Actions `windows-latest`, job A: build the exe, compile the installer,
   upload the artifact. This is what will find the two `.iss` bugs the Windows
@@ -2207,7 +2213,7 @@ entry ticket to a Windows APO later. Not near-term.
   uncommitted tree, never independently checked, and an earlier `.deb` in that
   same directory was found corrupted mid-session. Extract and run it before
   trusting it.
-- **E5. Publish models as release assets** so `import_models.py`'s cross-repo
+- **E5. Publish models as release assets** (**done 2026-10-30**: the `models-v1` release, which the Windows CI build fetches against pinned checksums) so `import_models.py`'s cross-repo
   dependency isn't the only distribution path (prerequisite for C6).
 
 ---
