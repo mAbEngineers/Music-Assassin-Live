@@ -148,8 +148,8 @@ See [Measuring quality](#measuring-quality) for what each reported number means.
 
 | model | type | rate | latency | RTF | verdict |
 |---|---|---|---|---|---|
-| **`dpdfnet_hr`** — default | speech enhancement | 48 kHz | 50 ms | 0.32 | Best overall music suppression of the enhancers; also the most damaging to the voice |
-| **`stemgen`** — new | realtime source separation | 44.1 kHz | ~6 ms | 0.09 | First true vocal/music separator in the lineup — keeps voice & stereo image intact; leaves more music audible than `dpdfnet_hr` |
+| **`dpdfnet_hr`** | speech enhancement | 48 kHz | 50 ms | 0.32 | Best overall music suppression of the enhancers; also the most damaging to the voice |
+| **`stemgen`** — default | realtime source separation | 44.1 kHz | ~6 ms | 0.09 | First true vocal/music separator in the lineup — keeps voice & stereo image intact; leaves more music audible than `dpdfnet_hr` |
 | `dtln` | speech enhancement | 16 kHz | 24 ms | 0.07 | Gentlest on vocals of the enhancers, and the lightest |
 | `gtcrn` | speech enhancement | 16 kHz | 16 ms | 0.09 | Smallest (2 MB) and fastest; deletes everything above 8 kHz |
 | `dpdfnet` | speech enhancement | 16 kHz | 50 ms | 0.15 | 16 kHz baseline; benchmarks show it's actively harmful — not recommended |
@@ -247,7 +247,7 @@ and `vocal` in dB; latency is what you hear, not what the model claims.
 
 | model | music removed | vocal kept | dSI-SDR | SAR | musNoise | lat | RTF |
 |---|---|---|---|---|---|---|---|
-| **`dpdfnet_hr`** (default) | **−46.1** | −5.0 | **+4.19** | **4.40** | **1.02** | 50 ms | 0.32 |
+| **`dpdfnet_hr`** | **−46.1** | −5.0 | **+4.19** | **4.40** | **1.02** | 50 ms | 0.32 |
 | `dtln` | −20.6 | **−0.9** | +3.59 | 4.24 | 3.11 | 24 ms | **0.07** |
 | `gtcrn` | −28.1 | −2.3 | +2.64 | 3.59 | −20.0 | **16 ms** | 0.09 |
 | `dpdfnet` (16 kHz baseline) | −52.9 | −3.1 | **−0.28** | 0.27 | 7.15 | 50 ms | 0.15 |
@@ -255,7 +255,7 @@ and `vocal` in dB; latency is what you hear, not what the model claims.
 | *offline separator* | −42.5 | — | +24.3 | 22.9 | 25.1 | — | — |
 | *theoretical best* | −55.0 | — | +18.1 | 16.9 | −3.0 | — | — |
 
-Read across rather than down. `dpdfnet_hr` wins overall and is the default,
+Read across rather than down. `dpdfnet_hr` wins overall on these numbers,
 but it's also the *most* damaging to the voice of the four, and its win
 comes from removing so much music that the scoring forgives that. `dtln`
 barely touches the voice at all (−0.9 dB) and runs ~4.5× lighter, but leaves
@@ -373,7 +373,7 @@ not possible — see `docs/ARCHITECTURE.md` §6 (Platform Reality Check).
 - [x] Layer 1 — PipeWire trap-sink routing, crash recovery, hotplug watch
 - [x] Layer 2 — streaming engine (dry-fallback, click-free toggle)
 - [x] Layer 3 — GTCRN / DPDFNet / SpeechDenoiser processors (offline-tested)
-- [x] Realtime vocal/music separator (StemgenRT) — selectable, bundled; `dpdfnet_hr` stays default
+- [x] Realtime vocal/music separator (StemgenRT) — selectable, bundled; `stemgen` is the default
 - [x] Layer 4 — minimal toggle GUI + headless mode
 - [x] Live end-to-end validation on real playback (BT sink; injected noise
       removed from output, speech passes, clean sink restore on exit)

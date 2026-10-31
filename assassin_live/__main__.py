@@ -39,7 +39,7 @@ def main():
     ap = argparse.ArgumentParser(prog="assassin_live")
     ap.add_argument("--headless", action="store_true",
                     help="no GUI; enable filter until Ctrl-C")
-    ap.add_argument("--model", default="dpdfnet_hr")
+    ap.add_argument("--model", default="stemgen")
     ap.add_argument("--bypass", action="store_true",
                     help="route audio but skip processing (plumbing test)")
     ap.add_argument("--midside", action="store_true",

@@ -8,7 +8,7 @@ Every direction raised so far, followed or not. One or two lines each: what, why
 - **rejected**: ruled out, with the reason. Check the reason before re-opening.
 - **blocked**: needs something else first.
 
-Context: the default model (`dpdfnet_hr`) removes music well but chews some voices. The causal separator (`stemgen`) keeps voices intact but leaves audible music. Numbers: ROADMAP A2 and B4.
+Context: the strongest-suppression model (`dpdfnet_hr`, the default until 2026-10-31; `stemgen` is now) removes music well but chews some voices. The causal separator (`stemgen`) keeps voices intact but leaves audible music. Numbers: ROADMAP A2 and B4.
 
 ## 1. Less leftover music from `stemgen`, voice unchanged
 
