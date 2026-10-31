@@ -56,6 +56,15 @@ MANIFEST = (
      "22b91cae3855e5a0620e66a917ca6c82c58db0e842c770f58d86751c5e8d4ae3"),
     ("dtln_model_2.onnx", 2510010,
      "e20c92f9233fccf29cddf86970d0d0161a03aebccc26d6f4d5639c4d5ec2e639"),
+    # The vocals-only subgraph that scripts/fetch_stemgen.py derives from
+    # upstream's full four-stem model -- not upstream's own file. The derived
+    # one is what build_deb.sh ships and what models/stemgen_rt_vocals.json
+    # describes, so it is published here too: one fetch path for a build, and
+    # no need for onnx to be installed just to do graph surgery in CI.
+    # Bundling it was a maintainer decision (models/README.md, 2026-10-24);
+    # its training corpora, MUSDB18-HQ and MoisesDB, are non-commercial.
+    ("stemgen_rt_vocals.onnx", 11068704,
+     "924e59ac14833483cefc870fbad11f2a048ad4903bac32139ae0285c039e835f"),
 )
 
 RETRIES = 3

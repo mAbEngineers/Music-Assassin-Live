@@ -46,10 +46,20 @@ speechdenoiser stays usable for local development (user drops the file in
 themselves), but must not ship in releases until upstream adds a license or
 the model is re-exported from the dual-licensed DeepFilterNet3 source.
 
-Neither stemgen nor mrx is fetched by `scripts/import_models.py` or
-`scripts/fetch_models.py`; each has its own pinned downloader
+Neither stemgen nor mrx is fetched by `scripts/import_models.py`, and mrx is
+not in `scripts/fetch_models.py` either; each has its own pinned downloader
 (`scripts/fetch_stemgen.py`, `scripts/fetch_mrx.py`) that verifies a
 published SHA-256 before installing.
+
+stemgen is an exception as of 2026-10-31: `scripts/fetch_models.py` now
+carries it as well, because the Windows build needs it and had no way to get
+it (`build_deb.sh` shipped stemgen while `build_windows.bat` did not, so
+Windows builds silently carried one model fewer). What is in that manifest is
+the *derived* vocals-only subgraph `fetch_stemgen.py` produces, not upstream's
+four-stem file -- the same artifact `build_deb.sh` stages and this card
+describes. `fetch_stemgen.py` remains the way to re-derive it from upstream;
+`fetch_models.py` is the way to get the already-derived copy without needing
+`onnx` installed.
 
 `scripts/fetch_models.py` deliberately will not fetch speechdenoiser, and
 its manifest is a hardcoded list rather than "whatever is in the release", so
