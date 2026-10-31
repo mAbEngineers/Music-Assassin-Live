@@ -26,8 +26,8 @@ Measured 2026-10-24 over the whole corpus (234 clip/ratio pairs):
 
 | | voice gain (dSI-SDR) | voice damage | music left | stereo |
 |---|---|---|---|---|
-| `dpdfnet_hr` (default) | +6.1 dB | −3.0 dB, `vocal-loss` on 46 clips | **−41 dB** | collapsed |
-| `stemgen` | **+7.9 dB** | **none** | −22 dB | **kept** |
+| `dpdfnet_hr` | +6.1 dB | −3.0 dB, `vocal-loss` on 46 clips | **−41 dB** | collapsed |
+| `stemgen` (default since 2026-10-31) | **+7.9 dB** | **none** | −22 dB | **kept** |
 
 On `nasheed` alone (130 pairs), `dpdfnet_hr` wins dSI-SDR (+7.7 against
 +5.7). It also removes about twice as much music there.
@@ -178,7 +178,7 @@ other (`IDEAS.md` 1.1). A separate effects mask is a second axis.
 ## Next, in order
 
 1. **Stemgen ships as is** (user decision 2026-10-24): selectable in the picker,
-   `dpdfnet_hr` stays default, bundled in the .deb (decided 2026-10-24; training data is
+   `dpdfnet_hr` stayed default until 2026-10-31 when `stemgen` became the default (user decision), bundled in the .deb (decided 2026-10-24; training data is
    non-commercial, flagged in its licence file). Cutting its music leak
    is next version's work (RESEARCH_IDEAS §1).
    Done: the `MAX_GAIN = 1` fix (`47a086d`). The re-measurement shows it costs
@@ -202,8 +202,8 @@ other (`IDEAS.md` 1.1). A separate effects mask is a second axis.
    is acceptable, which is item 4. `LIVE_SFX_HANDOVER.md` §4 still ranks the
    cheaper routes; a music-presence gate remains the only one that costs no
    latency.
-6. Tag 0.1.4 once B10 or a StemgenRT default removes the suppression
-   blocker.
+6. Tag 0.1.4 once B10 is fixed; the StemgenRT default (2026-10-31) is
+   in, but the suppression blocker is not gone by that alone.
 
 ## Decisions only the user can make
 

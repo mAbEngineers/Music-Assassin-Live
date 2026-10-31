@@ -115,7 +115,7 @@ class App:
         self.keep_effects_enabled = saved.get("keep_effects_enabled", True)
         self.atten_db = saved.get("atten_db", 0.0)
         self.smoothing_ms = saved.get("smoothing_ms", 0.0)
-        self._initial_pipeline = saved.get("pipeline", "dpdfnet_hr")
+        self._initial_pipeline = saved.get("pipeline", "stemgen")
 
         # WM_CLASS must equal the .desktop file's StartupWMClass, or the shell
         # cannot match this window to its icon and shows a generic one.
@@ -332,7 +332,7 @@ class App:
         return None
 
     def _pick_default_model(self, names: list[str]) -> str:
-        for candidate in (self._initial_pipeline, "dpdfnet_hr", "gtcrn"):
+        for candidate in (self._initial_pipeline, "stemgen", "dpdfnet_hr", "gtcrn"):
             if candidate and candidate in names:
                 return candidate
         return names[0]

@@ -35,8 +35,9 @@ Don't re-run that research.
 - Core pipeline live-validated on real Bluetooth hardware: trap-sink routing →
   20 ms duplex stream → ONNX model → real sink, with crash recovery and
   hotplug handling.
-- **Five processors** + passthrough: `dpdfnet_hr` (default, 48 kHz),
-  `gtcrn`, `dpdfnet`, `dtln`, `speechdenoiser`.
+- **Processors** + passthrough: `dpdfnet_hr` (48 kHz),
+  `gtcrn`, `dpdfnet`, `dtln`, `speechdenoiser`, plus `stemgen` (default since
+  2026-10-31) and `mrx`.
 - **Two filters**: mid/side stereo pre-filter (off by default),
   ~20 Hz–20 kHz band-limit (on by default). Both live-toggleable.
 - **Settings persistence** — `~/.config/music-assassin/settings.json`, restores
@@ -234,7 +235,8 @@ gain in the thing the model is genuinely for. That is a clear net win — it jus
 isn't a win on the music axis, which remains A1's problem alone.
 
 **Consequences.**
-- Keep `dpdfnet_hr` as default, and it is now a stronger default than §2.2
+- Keep `dpdfnet_hr` as default (as of this decision; `stemgen` replaced it as
+  default on 2026-10-31), and it was then a stronger default than §2.2
   implied: 48 kHz-native, so it avoids the resample round-trip and preserves
   high frequencies (measured: −4.0 dB in the 8–20 kHz band vs `gtcrn`'s
   −49.0 dB), **and** it is now a top-tier denoiser. Still not because it removes

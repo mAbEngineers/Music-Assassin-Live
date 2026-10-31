@@ -2,7 +2,7 @@
 
 > **New here? Start with `docs/CURRENT_STATE.md`** — one page on what is true now; this file is the full record.
 
-Updated 2026-10-31. **This file is the running record**, newest sections
+Updated 2026-10-31 (stemgen made the default, branch `feat/stemgen-default`). **This file is the running record**, newest sections
 first; it was once short and is no longer. It covers where things stand
 *right now* and what to do next. The plan, the reasoning, the
 measured findings and the list of dead ends all live in
@@ -17,6 +17,7 @@ icon, 0.1.5) is on `main`, and the revamped README with it. Branches now:
 
 | Branch | State |
 |---|---|
+| `feat/stemgen-default` | Off `main`: **`stemgen` is now the default pipeline** (GUI first run, saved-settings fallback, CLI `--model`), README and docs updated. Not yet merged or pushed. |
 | `main` | = `feat/separator-spike`, `043f858`. 0.1.5 in `__version__`; the last release is still **v0.1.3** and `v0.1.4` exists only as a local tag on `d1cfbe1`. |
 | `feat/separator-spike` | = `main`. Can be deleted whenever convenient. |
 | `dev` | `main` plus `feature/windows-backend`, merged `cf10837` with four conflicts resolved (see the commit message) and `WindowsBackend` brought up to the current `RoutingBackend` (`settling`, `relabel`, and the same single-pick fix `PipeWireBackend` got). Pushed. |
@@ -836,7 +837,8 @@ missing: ~70 ms of audible delay that appeared in no number at all.
 | starting from idle came up late / out of sync | **B7, fixed** |
 | the ON/OFF button gave no feedback and re-clicking reversed it | **C9, fixed** |
 
-**`dpdfnet_hr` stays the default.** `dtln` and `gtcrn` are both 16 kHz-native
+**`dpdfnet_hr` stayed the default at this point (changed to `stemgen` on 2026-10-31, see
+the branch table at the top).** `dtln` and `gtcrn` are both 16 kHz-native
 and delete everything above 8 kHz, which is disqualifying for anyone who
 notices it — so the choice was never really three-way.
 
@@ -1139,7 +1141,7 @@ Nothing here is committed. Seven things, in the order they were done.
 
 **1. 0.1.5 built and installed.** `__version__` is 0.1.5. The `.deb` bundles
 all five redistributable models including `stemgen_rt_vocals` (listing
-checked with `dpkg-deb -c`); `dpdfnet_hr` is still the default. The previous
+checked with `dpkg-deb -c`); `dpdfnet_hr` was still the default then (`stemgen` since 2026-10-31). The previous
 release is kept as the local tag `v0.1.4` (`d1cfbe1`); `dist/` still holds
 the old `music-assassin-live_0.1.4_amd64.deb` for rollback. The repo is on an
 sftp mount, so builds run from a copy on local disk:
