@@ -220,8 +220,12 @@ Output: `dist\music-assassin-live-setup-<version>.exe`
   the previous artwork for a path it had already seen — the taskbar
   updated, the desktop shortcut did not. `ie4uinit.exe -show` runs
   afterwards to prod the cache as well
-- A **Restore my speakers** shortcut (`--recover`), for putting the system
-  default back when the app is no longer running to do it itself
+  There is deliberately **no** "Restore my speakers" shortcut. One was
+  added and removed the same day: the first user to see it read it as a
+  second app cluttering the Start menu, which is fair — a recovery tool is
+  not an app. Nothing is lost, because launching the app runs
+  `recover_stale()` at startup and the uninstaller runs `--recover` before
+  deleting anything. The flag stays for use from a terminal.
 
 ### What the uninstaller does not do
 
@@ -238,6 +242,31 @@ forgetting to ask. The Ready page now states that the step is being skipped
 and why. Before files are deleted, the uninstaller also runs the app once
 with `--recover --headless`, so uninstalling while the filter is on cannot
 leave the cable holding the system default with no app left to hand it back.
+
+### One source of truth for "is a cable installed"
+
+Setup and the app used to answer that question with different tests, and a
+user hit the gap: they removed VB-CABLE, reinstalled the app, and setup
+skipped the driver step while the app then refused to start for want of a
+cable.
+
+- Setup tested for `HKLM\SOFTWARE\VB-Audio\Cable`. VB-CABLE's own *Remove
+  Driver* leaves that key behind.
+- The app tests for a render endpoint named `CABLE Input`, because that is
+  the thing it actually has to use.
+
+`EnsureVBCable` now calls `{app}\music-assassin-live.exe --check-cable` and
+believes the answer — exit 0 present, 1 absent, 3 cannot tell (not Windows,
+or `pycaw`/`comtypes` missing), with 3 falling back to the registry guess so
+an unanswerable question never reads as "install a driver". The registry
+check survives for one job only, deciding whether to *offer* the task
+before any files exist, and its docstring says so; it was the use of it to
+*skip* work that caused this.
+
+When the key is present but the endpoint is not — a pending reboot, or a
+removal that left traces — setup asks whether to install or repair rather
+than guessing, because the task checkbox was hidden on the strength of that
+same key and installing an unoffered driver silently is worse.
 
 ## Icon
 

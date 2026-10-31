@@ -88,12 +88,32 @@ def main():
     ap.add_argument("--list-models", action="store_true")
     ap.add_argument("--recover", action="store_true",
                     help="clean up stale trap sinks and restore default sink")
+    ap.add_argument("--check-cable", action="store_true",
+                    help="exit 0 if a virtual audio cable endpoint exists, "
+                         "1 if not, 3 if it cannot be determined; for the "
+                         "Windows installer")
     args = ap.parse_args()
 
     if args.list_models:
         for n in processors.available(models_dir()):
             print(n)
         return
+
+    # Before the unsupported_reason() guard below, deliberately: the guard
+    # refuses to run *because* there is no cable, and this is the question
+    # "is there a cable", asked by the installer mid-install. Answering it
+    # with an error dialog and exit 2 would be useless to the caller.
+    if args.check_cable:
+        from .audio.routing import trap_render_present
+        present = trap_render_present()
+        if present is None:
+            # Not Windows, or pycaw/comtypes missing. Distinct exit code so
+            # the installer falls back to its own heuristic instead of
+            # reading this as "no cable, install the driver".
+            print("cannot determine")
+            raise SystemExit(3)
+        print("cable present" if present else "no cable")
+        raise SystemExit(0 if present else 1)
 
     # Everything below drives a platform audio graph. Check one is actually
     # reachable before touching it, so an unsupported platform or a missing

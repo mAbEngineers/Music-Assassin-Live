@@ -136,10 +136,12 @@ Type: filesandordirs; Name: "{autoprograms}\Music Assassin Live"
 ; file gives the cache a key it has never seen.
 Name: "{autoprograms}\Music Assassin Live"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\music-assassin-live.ico"
 Name: "{autodesktop}\Music Assassin Live"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\music-assassin-live.ico"; Tasks: desktopicon
-; The way back from a crash, for the user whose sound is going to the cable
-; and whose app is no longer running to put it back. --recover restores the
-; default endpoint and says so; see assassin_live/__main__.py.
-Name: "{autoprograms}\Restore my speakers (Music Assassin Live)"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--recover"; IconFilename: "{app}\music-assassin-live.ico"; Comment: "Point Windows playback back at your speakers"
+; NO "Restore my speakers" shortcut. It was added here and removed the same
+; day: the first user to see it read it as a second app cluttering the Start
+; menu, which is fair -- a recovery tool is not an app. Nothing is lost,
+; because launching Music Assassin Live itself runs recover_stale() at
+; startup and the uninstaller runs --recover before deleting anything. The
+; flag stays for anyone who wants it from a terminal.
 
 [Registry]
 ; Lets assassin_live/paths.py find the bundled models with zero code changes
@@ -203,11 +205,53 @@ var
 
 function VBCableAppearsInstalled: Boolean;
 begin
-  { Heuristic only -- used to decide whether to prompt, never to skip a step
+  { Heuristic only -- used to decide whether to PROMPT, never to skip a step
     that would otherwise run. VB-CABLE registers itself here under both its
-    32-bit and 64-bit install paths. }
+    32-bit and 64-bit install paths.
+
+    That restriction is not stylistic. EnsureVBCable used to begin with
+    "if VBCableAppearsInstalled then Exit", exactly the thing this comment
+    forbids, and it cost a user a working install: VB-CABLE's own Remove
+    Driver leaves this key behind, so setup announced that the driver step
+    was being skipped while the app -- which tests for the ENDPOINT, not
+    the key -- reported no virtual cable installed. Use
+    CableEndpointPresent below for any decision that skips work. }
   Result := RegKeyExists(HKLM32, 'SOFTWARE\VB-Audio\Cable') or
             RegKeyExists(HKLM64, 'SOFTWARE\VB-Audio\Cable');
+end;
+
+function CableEndpointPresent: Boolean;
+var
+  ResultCode: Integer;
+  Exe: String;
+begin
+  { Asks the app, so that setup and the app cannot hold different opinions
+    about whether a cable exists. --check-cable exits 0 for present, 1 for
+    absent and 3 for "cannot tell" (not Windows, or pycaw/comtypes
+    missing); see assassin_live/__main__.py. Anything other than a clean 0
+    or 1 falls back to the registry guess, because an unanswerable question
+    must not read as "no cable, install a driver".
+
+    Only callable after the files are installed, which is why every caller
+    is in the post-install step. }
+  Exe := ExpandConstant('{app}\{#MyAppExeName}');
+  if not FileExists(Exe) then
+  begin
+    Result := VBCableAppearsInstalled;
+    Exit;
+  end;
+  if not Exec(Exe, '--check-cable', ExtractFileDir(Exe), SW_HIDE,
+              ewWaitUntilTerminated, ResultCode) then
+  begin
+    Result := VBCableAppearsInstalled;
+    Exit;
+  end;
+  if ResultCode = 0 then
+    Result := True
+  else if ResultCode = 1 then
+    Result := False
+  else
+    Result := VBCableAppearsInstalled;
 end;
 
 function ShouldOfferCableTask: Boolean;
@@ -300,9 +344,35 @@ procedure EnsureVBCable;
 var
   TempDir, WorkDir, ZipPath, SetupExe: String;
 begin
-  if VBCableAppearsInstalled then
+  { The only test that decides whether work gets skipped -- see the note on
+    VBCableAppearsInstalled for what skipping on the registry key cost. }
+  if CableEndpointPresent then
     Exit;
-  if not WizardIsTaskSelected('vbcable') then
+
+  if VBCableAppearsInstalled then
+  begin
+    { Registered, but Windows is not listing the device. Two causes and no
+      way to tell them apart from here: a reboot is pending after an
+      install, or VB-CABLE was removed and left its key behind. Running its
+      installer again is right for both, so ask rather than guess -- and
+      ask, rather than silently install a driver the user was never
+      offered, because the task checkbox was hidden on the strength of that
+      same key. }
+    if MsgBox('Windows is not listing VB-CABLE''s audio device, even though ' +
+              'VB-CABLE is registered on this machine.' + #13#10#13#10 +
+              'That happens if the driver was removed and left traces ' +
+              'behind, or if it was installed and the machine has not been ' +
+              'restarted yet. Music Assassin Live cannot route audio ' +
+              'without the device.' + #13#10#13#10 +
+              'Install or repair VB-CABLE now?',
+              mbConfirmation, MB_YESNO) = IDNO then
+    begin
+      SayManualSteps('VB-CABLE''s audio device is missing and you chose not ' +
+                     'to reinstall it now.');
+      Exit;
+    end;
+  end
+  else if not WizardIsTaskSelected('vbcable') then
   begin
     SayManualSteps('VB-CABLE was not installed, because you chose to skip it.');
     Exit;
@@ -399,8 +469,10 @@ begin
     Result := Result + NewLine + NewLine + MemoTasksInfo;
   if VBCableAppearsInstalled then
     Result := Result + NewLine + NewLine + 'Virtual audio device:' + NewLine +
-              Space + 'VB-CABLE is already installed, so the driver step ' +
-              'will be skipped.';
+              Space + 'VB-CABLE looks already installed, so the driver step ' +
+              'will be skipped.' + NewLine + Space +
+              'If its audio device turns out to be missing, setup will ' +
+              'offer to reinstall it.';
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

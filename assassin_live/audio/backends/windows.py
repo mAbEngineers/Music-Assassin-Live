@@ -923,3 +923,38 @@ def list_sinks() -> list:
     """Module-level form, for callers that ask before a session exists.
     Mirrors backends/pipewire.list_sinks()."""
     return WindowsBackend()._sinks()
+
+
+def trap_render_present(core: "CoreAudio | None" = None) -> "bool | None":
+    """Is a virtual cable's render endpoint actually there, right now?
+
+    Exists so the *installer* can ask the app this question instead of
+    answering it itself. It used to answer it itself, with a different
+    test, and the two disagreed: the installer checked for VB-Audio's
+    registry key under HKLM\\SOFTWARE\\VB-Audio\\Cable, while the app
+    checks for an endpoint named "CABLE Input". VB-CABLE's own Remove
+    Driver leaves that key behind, so a machine whose driver had been
+    removed got "VB-CABLE is already installed, skipping the driver step"
+    from setup and "No virtual audio cable is installed" from the app, in
+    the same sitting. One source of truth, and it is this one, because it
+    is the thing the app will actually try to use.
+
+    None means the question could not be answered -- no pycaw/comtypes, so
+    not even the enumeration is available -- which is not the same as
+    False and must not be treated as "go install a driver".
+
+    The core argument is the test seam, as on recover_stale(). An injected
+    core *is* the enumeration, so the dependency probe is skipped for it --
+    otherwise this could only ever return None off Windows and the one
+    answer worth asserting (that a 16ch endpoint alone is not a usable
+    cable) would be untestable.
+    """
+    if core is None:
+        try:
+            import comtypes     # noqa: F401
+            import pycaw        # noqa: F401
+        except Exception:       # noqa: BLE001
+            return None
+        core = CoreAudio()
+    return any(_matches(name, TRAP_RENDER_NAMES)
+               for _, name in core.render_endpoints())

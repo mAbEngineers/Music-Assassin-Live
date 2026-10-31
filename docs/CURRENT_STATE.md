@@ -146,8 +146,10 @@ cable holding the default:** `recover_stale()` only ran at startup, so the
 machine stayed quiet until the app was launched again, with nothing on
 screen to say so. Hooks now cover exit, unhandled exceptions, dead worker
 threads and Tk callbacks, there is a Start-menu *Restore my speakers*
-shortcut (`--recover`) for when the process is gone, and the uninstaller
-runs it before deleting anything.
+flag (`--recover`) for when the process is gone, and the uninstaller runs it
+before deleting anything. A Start-menu shortcut for that flag was added and
+removed the same day — the user read it as a second app cluttering the menu,
+and launching the app recovers anyway.
 
 **Still open: why it crashed.** Nothing was recording it — the build is
 PyInstaller `--windowed`, so it has no console and every traceback went to a
@@ -156,6 +158,16 @@ tracebacks (main thread, spawned threads, Tk callbacks) and `faulthandler`
 output for a fault inside onnxruntime or PortAudio, which no Python hook can
 see, to `crash.log` in the state dir. The next crash should explain itself;
 this one cannot be diagnosed from here. Ask for that file first.
+
+A fifth, found when the user removed VB-CABLE and reinstalled: **setup and
+the app disagreed about whether a cable exists.** Setup tested for
+VB-Audio's registry key and skipped the driver step on it; VB-CABLE's own
+Remove Driver leaves that key behind; the app tests for the `CABLE Input`
+endpoint. So setup skipped the download and the app then refused to start
+for want of a cable. `EnsureVBCable` now asks the app
+(`--check-cable`, exit 0/1/3) and the registry check is back to its
+documented job of deciding whether to *offer* the task — which is what its
+own comment had said all along while the code did otherwise.
 
 Two cosmetic fixes in the same pass: the Start-menu entry was a program
 group, which Windows 10/11 draws as a folder to open rather than an app to
@@ -265,13 +277,16 @@ that reason; item numbers are referenced across these docs.
 - **Musical noise:** how much is an acceptable price for a kept syllable?
 - **StemgenRT's licence:** its training data is non-commercial (MUSDB18-HQ,
   MoisesDB). That decides whether it can be bundled.
-- **Code signing for Windows** (raised by the user 2026-10-31, who hit the
-  warnings installing 0.1.5): the installer is unsigned, so SmartScreen
-  warns and UAC says "Publisher: Unknown". Costs money and needs identity
-  verification, and since June 2023 the key must sit on certified hardware,
-  so there is no free route. Options and rough costs are in
-  `packaging/windows/README.md` "Unsigned: the two warnings". Nothing in
-  the code can change this.
+- **Code signing for Windows — decided 2026-10-31: stay unsigned for now.**
+  The user hit both warnings installing 0.1.5 (SmartScreen, and UAC's
+  "Publisher: Unknown"). Removing them needs an Authenticode certificate,
+  which costs money and needs identity verification, and since June 2023
+  the key must sit on certified hardware, so there is no free route.
+  Deferred because the app still crashes after a while and the cause is
+  unknown: paying for a certificate before it runs reliably is premature.
+  Revisit before any public release. Options and rough costs are in
+  `packaging/windows/README.md` "Unsigned: the two warnings"; until then,
+  tell anyone given a build that the warning is expected.
 
 ## Working here: things that bite
 

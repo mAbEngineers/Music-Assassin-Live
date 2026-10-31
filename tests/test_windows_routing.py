@@ -588,6 +588,41 @@ def test_disable_leaves_the_default_alone_rather_than_pick_a_cable():
     _isolated(go)
 
 
+def test_trap_render_present_is_what_the_installer_asks():
+    """One source of truth for "is a cable installed".
+
+    The installer used to answer this itself by testing for VB-Audio's
+    registry key, and skipped the driver step on it. VB-CABLE's Remove
+    Driver leaves that key behind, so setup said "already installed,
+    skipping" while the app said "no virtual audio cable is installed" --
+    on the same machine, minutes apart. The installer now shells out to
+    --check-cable, which lands here.
+    """
+    assert windows.trap_render_present(
+        FakeCoreAudio(present=[CABLE, SPEAKERS])) is True
+    assert windows.trap_render_present(
+        FakeCoreAudio(present=[SPEAKERS, HEADSET])) is False
+    # The one that matters, and the reason this takes the trap list rather
+    # than the virtual list: 16ch is a cable, but it is not one we can trap
+    # through -- there is no CABLE Out 16ch capture side we read. A machine
+    # with only that endpoint has no usable cable.
+    assert windows.trap_render_present(
+        FakeCoreAudio(present=[CABLE16, SPEAKERS])) is False
+    print("  check-cable    -> endpoint-based, and 16ch alone is not a cable")
+
+
+def test_the_platform_layer_dispatches_the_cable_check():
+    """routing.py is the only place a platform is chosen; an installer flag
+    that bypassed it would be a second platform branch."""
+    from assassin_live.audio import routing
+    assert callable(routing.trap_render_present)
+    if sys.platform.startswith("linux"):
+        assert routing.trap_render_present() is None, (
+            "Linux needs no cable; None means 'does not apply', and False "
+            "would read as 'go install a driver'")
+    print("  dispatch       -> routing.trap_render_present, None on Linux")
+
+
 def test_recover_stale_rescues_a_default_left_on_a_second_cable():
     """The machine a previous build could leave behind.
 

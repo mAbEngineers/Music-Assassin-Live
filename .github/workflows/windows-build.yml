@@ -155,6 +155,27 @@ jobs:
           echo ERROR: the app started with no cable installed instead of refusing >&2
           exit /b 1
 
+      # The installer calls this to decide whether it still has to install a
+      # driver, so its exit codes are a contract, not an implementation
+      # detail. A runner has comtypes and pycaw but no cable, which is
+      # exactly the "1" case -- and a 3 here would mean the installer
+      # silently falls back to the registry guess that caused the bug this
+      # flag exists to fix.
+      - name: Assert --check-cable reports no cable, with the documented code
+        shell: cmd
+        run: |
+          .venv\Scripts\python.exe -m assassin_live --check-cable
+          if errorlevel 2 (
+            echo ERROR: --check-cable could not determine; expected exit 1 >&2
+            exit /b 1
+          )
+          if errorlevel 1 (
+            echo OK: reported no cable with exit 1
+            exit /b 0
+          )
+          echo ERROR: --check-cable claims a cable exists on a runner >&2
+          exit /b 1
+
       # 6.4.3 specifically: 6.5.0+ added a paid commercial-license tier, so
       # this is the last version unambiguously free for this project.
       #
