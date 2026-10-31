@@ -11,17 +11,17 @@ measured findings and the list of dead ends all live in
 ## Where the code is
 
 **Corrected 2026-10-31; everything below this block about branches that
-predates it is history.** `main` and `feat/separator-spike` are both at
-`043f858` on GitHub: the live-app work (StemgenRT, MRX, the stall fixes, the
+predates it is history.** `main` is at `939d307` on GitHub
+(was `043f858`): the live-app work (StemgenRT, MRX, the stall fixes, the
 icon, 0.1.5) is on `main`, and the revamped README with it. Branches now:
 
 | Branch | State |
 |---|---|
-| `feat/stemgen-default` | Off `main`, one commit `31c5486`: **`stemgen` is the default pipeline** (GUI first run, saved-settings fallback, CLI `--model`), README and docs updated. Merged into `dev` (`3788c99`). **Not pushed, not in `main` yet.** |
-| `main` | = `feat/separator-spike`, `043f858`. 0.1.5 in `__version__`; the last release is still **v0.1.3** and `v0.1.4` exists only as a local tag on `d1cfbe1`. |
-| `feat/separator-spike` | = `main` (`06e696c`), already merged. Work moved to `feat/stemgen-default`; delete whenever convenient. |
-| `dev` | `main` plus `feature/windows-backend` (merged `cf10837`) plus `feat/stemgen-default` (`3788c99`); the Windows merge with four conflicts resolved (see the commit message) and `WindowsBackend` brought up to the current `RoutingBackend` (`settling`, `relabel`, and the same single-pick fix `PipeWireBackend` got). Pushed. |
-| `feature/windows-backend` | 11 commits on the old `main`; draft PR #3. Left unmerged to `main` on purpose. Windows is untested on real hardware. |
+| `feat/stemgen-default` | `stemgen` as default pipeline (`31c5486`, handover `7090005`). Merged into `main` and `dev`, pushed. Can be deleted. |
+| `main` | `939d307`, pushed 2026-10-31. **Contains the Windows work too**: the stemgen branch had `origin/dev` merged into it by another session at 12:09, and `main` was fast-forwarded to that, so `feature/windows-backend` (and so PR #3) is effectively in. Kept on purpose after the user said not to revert. Windows is still untested on real hardware; the README says so. 0.1.5 in `__version__`; last release still **v0.1.3**, `v0.1.4` only a local tag on `d1cfbe1`. |
+| `feat/separator-spike` | Deleted 2026-10-31 (local and GitHub); it equalled the old `main`, `06e696c`. |
+| `dev` | Same tree as `main` (`f4c9b51`, merges `main` in). Where Windows work continues. Pushed. |
+| `feature/windows-backend` | 11 commits, now inside `main` and `dev`. Draft PR #3 is effectively merged; close or mark it as such on GitHub. |
 | `feature/windows-guard` | Its two commits are inside `windows-backend`; PR #2 closed as superseded. Kept. |
 
 Deleted 2026-10-31 (all had been merged or superseded): `feature/stereo-output`
@@ -1068,14 +1068,24 @@ now copies them in under the names the registry looks up.
 - **Deliberately not changed:** `tests/bench_quality.py` `DEFAULT_CFG` stays on
   `dpdfnet_hr`, so new benchmark runs remain comparable with the recorded
   numbers. Pass `--model stemgen` there to bench the new default.
-- **Windows.** A Windows build will not bundle stemgen yet (its
-  `scripts/fetch_models.py` manifest lacks it), so there the fallback to
-  `dpdfnet_hr` applies. Fix that before shipping Windows. The Windows to-do
-  list is in the 2026-10-31 hand-over given in conversation; the durable
-  record is `packaging/windows/HANDOVER.md` plus the notes above.
-- **Not done / waiting on the user:** push `dev` and `feat/stemgen-default`;
-  fast-forward `main`; delete `feat/separator-spike`; build and install a new
-  .deb (the installed 0.1.5 still defaults to `dpdfnet_hr`); real-use check of
+- **Windows.** Another session fixed the model gap in `17264c3`
+  (`fetch_models.py` manifest and `build_windows.bat` now carry stemgen) and
+  put the Windows tests in `run_tests.sh`; that is in `main` now. What is
+  still open is everything that needs real Windows hardware: run with a
+  VB-CABLE installed, output switching (restarts the stream, no live move),
+  compile the installer, `paths.py` under `%LOCALAPPDATA%`, and the
+  VB-Audio email. Record: `packaging/windows/HANDOVER.md` and ROADMAP D3/D4.
+- **`main` got the Windows work by accident** (see the branch table). The user
+  chose to keep it rather than force-push `main` back.
+- **`tests/test_stereo_rebuild.py` is load-sensitive.** It checks only the last
+  third of a short run and assumes the ~1.5 s lag measurement has finished.
+  Under heavy CPU load (load average 22-30 from an unrelated process) it
+  failed 5 of 11 runs, and the pre-2026-10-31 code failed it too, so it is
+  not a regression. Fix when convenient: wait for the engine's lag state to
+  report done instead of a fixed window.
+- **Not done / waiting on the user:** install the rebuilt .deb
+  (`sudo dpkg -i`, the agent cannot sudo; the installed 0.1.5 still defaults
+  to `dpdfnet_hr` until then); real-use check of
   the resync and output label; hidden-sink redesign (proposed, not started);
   v0.1.4 and v0.1.5 tags and releases not pushed.
 - **Environment reminders.** Repo is on an sftp mount: write commit messages to
