@@ -126,6 +126,9 @@ set "BUNDLED_ANY=0"
 call :stage_model gtcrn_simple.onnx gtcrn_simple.json MIT-gtcrn.txt
 call :stage_model dpdfnet_baseline.onnx dpdfnet_baseline.json Apache-2.0-dpdfnet.txt
 call :stage_model dpdfnet2_48khz_hr.onnx dpdfnet2_48khz_hr.json Apache-2.0-dpdfnet.txt
+REM stemgen was absent here while scripts/build_deb.sh shipped it, so Windows
+REM builds silently carried one model fewer than Linux ones.
+call :stage_model stemgen_rt_vocals.onnx stemgen_rt_vocals.json MIT-stemgen-rt.txt
 call :stage_dtln
 
 if "%BUNDLED_ANY%"=="0" (
