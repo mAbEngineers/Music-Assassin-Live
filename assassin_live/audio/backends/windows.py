@@ -134,14 +134,20 @@ def _ensure_com() -> None:
     """Initialise COM on the calling thread, once per thread.
 
     comtypes calls CoInitialize() for the thread that imports it and no
-    other, so every COM call from a thread we spawned ourselves fails with
-    "CoInitialize has not been called" until this runs. That is not a
-    hypothetical: ui/app.py does enable()/disable() on a worker thread so the
-    Tk loop keeps painting, which meant the startup cable check (main thread)
-    succeeded while the very next call on the toggle (worker thread)
-    enumerated nothing. render_endpoints() swallows the error and returns [],
-    so it surfaced as "no hardware audio sink found" on a laptop sitting
-    right next to its own working speakers.
+    other. Whether that actually breaks a thread we spawned depends on the
+    process apartment: apartment-threaded (comtypes' default) leaves such a
+    thread with no apartment and COM calls fail with CO_E_NOTINITIALIZED,
+    while in an MTA Windows folds an uninitialised thread in implicitly and
+    everything works. A GitHub runner takes the forgiving path, so this is
+    not reliably reproducible there (tests/test_windows_com_thread.py).
+
+    It matters because ui/app.py runs enable()/disable() on a worker thread
+    so the Tk loop keeps painting, and render_endpoints() swallows errors and
+    returns [] -- which the backend then correctly reads as "nothing to play
+    to". On the machine where that is the apartment, the startup cable check
+    passes on the main thread and the toggle fails on the worker, which is
+    indistinguishable from having no speakers. Initialising per thread costs
+    nothing and removes the question.
 
     Called from every CoreAudio entry point rather than from the threads
     themselves: the threads belong to the UI and the engine, and neither
