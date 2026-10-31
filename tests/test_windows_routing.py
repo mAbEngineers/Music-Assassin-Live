@@ -209,6 +209,52 @@ def test_enable_reports_a_refused_switch():
     _isolated(go)
 
 
+def test_each_enable_failure_says_which_one_it_was():
+    """All four failures return None, so the return value cannot tell them
+    apart -- and ui/app.py showed "No hardware audio sink found (Bluetooth
+    asleep?)" for every one of them. That sentence sent the first real
+    Windows test looking at its speakers when COM was the problem.
+    """
+    def go(state):
+        cases = []
+
+        core = FakeCoreAudio(present=[], default=None)
+        cases.append(("nothing enumerated", backend(core), "fault in the app"))
+
+        core = FakeCoreAudio(present=[SPEAKERS], default=SPEAKERS)
+        cases.append(("no cable", backend(core), "no longer installed"))
+
+        core = FakeCoreAudio(present=[CABLE], default=CABLE)
+        cases.append(("cable only", backend(core), "no other output device"))
+
+        core = FakeCoreAudio()
+        core.refuse = True
+        cases.append(("switch refused", backend(core), "refused"))
+
+        seen = []
+        for label, b, expected in cases:
+            assert b.enable() is None, f"{label}: enabled anyway"
+            why = b.last_enable_error
+            assert why, f"{label}: failed without saying why"
+            assert expected in why, f"{label}: {why!r} does not mention {expected!r}"
+            assert "Bluetooth" not in why, f"{label}: still blaming Bluetooth"
+            seen.append(why)
+            print(f"  {label:<18} -> {why.split('.')[0][:58]}")
+
+        assert len(set(seen)) == len(seen), "two failures give the same message"
+    _isolated(go)
+
+
+def test_a_successful_enable_clears_the_last_error():
+    def go(state):
+        b = backend(FakeCoreAudio())
+        b.last_enable_error = "stale text from a previous attempt"
+        assert b.enable() is not None
+        assert b.last_enable_error is None, "kept a stale failure message"
+        print("  enable ok      -> last_enable_error cleared")
+    _isolated(go)
+
+
 def test_disable_restores_the_real_endpoint():
     def go(state):
         core = FakeCoreAudio(default=SPEAKERS)

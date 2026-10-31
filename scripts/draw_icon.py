@@ -63,6 +63,12 @@ def draw() -> Image.Image:
     return Image.alpha_composite(base, mark.resize((SIZE, SIZE), Image.LANCZOS))
 
 
+# Windows asks for the frame nearest the size it wants and scales whatever it
+# gets, so a missing 256 is a blurry Explorer tile and a missing 16 is a
+# muddy titlebar. Same list the .iss header documents for ImageMagick.
+ICO_SIZES = (256, 128, 64, 48, 32, 16)
+
+
 def main() -> None:
     icon = draw()
     icon.save(ROOT / "packaging/icons/music-assassin-live-1024.png")
@@ -70,7 +76,17 @@ def main() -> None:
     for name, px in (("icon.png", 128), ("icon_32.png", 32),
                      ("icon_48.png", 48), ("icon_64.png", 64)):
         icon.resize((px, px), Image.LANCZOS).save(assets / name)
-    print("wrote 1024 + 4 asset sizes")
+    # The .ico is written HERE, from the same master, because it used to be a
+    # separate manual ImageMagick step: the icon was redrawn on 2026-10-31
+    # and the .ico kept the 2026-10-18 artwork, so the window showed the new
+    # icon while the taskbar, Explorer and the installer showed the old one.
+    # Pillow downsamples each frame itself, so pass it the master rather than
+    # the 128 px asset -- scaling 128 up to 256 is how you get a soft tile.
+    ico = ROOT / "packaging/icons/music-assassin-live.ico"
+    icon.save(ico, format="ICO",
+              sizes=[(px, px) for px in ICO_SIZES])
+    print(f"wrote 1024 + 4 asset sizes + {ico.name} "
+          f"({', '.join(str(p) for p in ICO_SIZES)})")
 
 
 if __name__ == "__main__":

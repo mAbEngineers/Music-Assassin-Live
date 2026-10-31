@@ -43,6 +43,7 @@ on:
       - 'scripts/fetch_models.py'
       - 'tests/test_platform_guard.py'
       - 'tests/test_windows_routing.py'
+      - 'tests/test_windows_com_thread.py'
       - '.github/workflows/windows-build.yml'
   pull_request:
     paths:
@@ -56,6 +57,7 @@ on:
       - 'scripts/fetch_models.py'
       - 'tests/test_platform_guard.py'
       - 'tests/test_windows_routing.py'
+      - 'tests/test_windows_com_thread.py'
       - '.github/workflows/windows-build.yml'
   workflow_dispatch:
 
@@ -101,6 +103,18 @@ jobs:
         shell: cmd
         run: |
           .venv\Scripts\python.exe -c "from assassin_live.audio.backends.windows import CoreAudio; c = CoreAudio(); e = c.render_endpoints(); print('render endpoints:', len(e)); [print('   ', n) for _, n in e]; print('default:', c.default_render_endpoint()); print('policy config:', 'yes' if c._policy_config() is not None else 'no')"
+          if errorlevel 1 exit /b 1
+          exit /b 0
+
+      # The enumeration above runs on the main thread, where comtypes has
+      # already called CoInitialize() for us. ui/app.py does enable() on a
+      # worker thread, which it had not -- so the first on-hardware run saw
+      # zero endpoints and blamed the user's speakers. A runner has no audio
+      # devices, but it does have COM, so this is catchable here.
+      - name: Assert Core Audio works from a worker thread, not just the main one
+        shell: cmd
+        run: |
+          .venv\Scripts\python.exe tests\test_windows_com_thread.py
           if errorlevel 1 exit /b 1
           exit /b 0
 

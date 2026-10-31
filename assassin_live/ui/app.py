@@ -94,10 +94,44 @@ def _icon_path() -> Path:
     return Path(__file__).resolve().parent / "assets" / "icon.png"
 
 
+def enable_dpi_awareness() -> None:
+    """Tell Windows this process does its own scaling, before any window.
+
+    Without it Windows reports 96 DPI to the process whatever the user's
+    display scaling is, so _ui_scale() computes 1.0, lays the window out at
+    1x, and Windows then bitmap-stretches the finished result to 125/150/200
+    %. Everything is legible but soft -- which is what "low res on Windows"
+    was. Nothing here is wrong on Linux; X11/Wayland report the real DPI.
+
+    PROCESS_SYSTEM_DPI_AWARE (1) rather than per-monitor: this window is a
+    fixed size and reads its scale once at startup, so it has no way to
+    re-lay itself out when dragged to a monitor with different scaling.
+    System awareness means Windows stretches it in that one case, instead of
+    leaving it crisp at the wrong physical size -- the better of the two.
+
+    Must run before the first Tk window exists: Windows latches the mode on
+    the first call of the process and ignores the rest. Idempotent, so the
+    several entry points that build a window can each just call it.
+    """
+    if not sys.platform.startswith("win"):
+        return
+    import ctypes
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        return
+    except Exception:       # noqa: BLE001
+        pass                # pre-8.1, or a manifest already set the mode
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:       # noqa: BLE001
+        pass                # nothing better available; soft beats crashing
+
+
 class App:
     def __init__(self):
         saved = self._load_settings()
         self.routing = RoutingSession()
+        enable_dpi_awareness()      # before tk.Tk() below, or it does nothing
         self.engine: AudioEngine | None = None
         self.mute_dry = saved.get("mute_dry", False)
         self.mute_wet = saved.get("mute_wet", False)
@@ -790,7 +824,10 @@ class App:
             real = self.routing.enable()
             if real is None:
                 self.routing.disable()
-                self._result = ("nosink", None, None)
+                # The backend may know which way it failed; "no sink" is only
+                # one of several and was the wrong guess on Windows.
+                self._result = ("nosink", None,
+                                getattr(self.routing, "last_enable_error", None))
                 return
             engine = AudioEngine(proc, self.routing)
             engine.set_intensity(self.mix_pct / 100.0)
@@ -843,9 +880,12 @@ class App:
         elif kind == "nosink":
             self.enabled = False
             self._paint_button("off")
-            self._say("no hardware output found — reconnect and try again", AMBER)
+            self._say("could not start — see the dialog", AMBER)
             messagebox.showwarning(
-                "No output device",
+                "Could not start",
+                extra or
+                # Linux/PipeWire still has no per-reason text, and there the
+                # sleeping-Bluetooth guess is usually right.
                 "No hardware audio sink found (Bluetooth asleep?). "
                 "Play something / reconnect and try again.")
         else:

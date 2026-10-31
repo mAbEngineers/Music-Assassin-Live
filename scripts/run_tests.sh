@@ -37,6 +37,8 @@ HARDWARE_FREE=(
   test_volume_mirror        # C2's mirror
   test_platform_guard       # the startup refusal, and the crash it replaces
   test_windows_routing      # D3.3's state machine, with COM faked out
+  test_windows_com_thread   # COM on a worker thread (Windows only; skips here)
+  test_icon_assets          # the .ico matches the icon the app draws (needs Pillow)
 )
 
 fail=0
@@ -45,7 +47,15 @@ echo "== hardware-free suite =="
 for t in "${HARDWARE_FREE[@]}"; do
   printf '  %-26s ' "$t"
   if out=$("$PY" "tests/$t.py" 2>&1); then
-    echo "PASS"
+    # A test that cannot run here exits 0 after saying so (the Windows COM
+    # check off Windows, the icon check without Pillow). Reported as SKIPPED
+    # rather than PASS: see the note at the top about suites that shrink.
+    if grep -q "SKIPPED" <<<"$out"; then
+      echo "$(grep -o 'SKIPPED.*' <<<"$out" | head -1)"
+      skipped+=("$t")
+    else
+      echo "PASS"
+    fi
   else
     echo "FAIL"
     echo "$out" | sed 's/^/      /'

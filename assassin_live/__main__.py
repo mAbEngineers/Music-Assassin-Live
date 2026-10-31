@@ -27,6 +27,9 @@ def _report_unsupported(reason: str, gui: bool) -> None:
     try:
         import tkinter
         from tkinter import messagebox
+
+        from .ui.app import enable_dpi_awareness
+        enable_dpi_awareness()      # this dialog is the first window, so here too
         root = tkinter.Tk()
         root.withdraw()
         messagebox.showerror("Music Assassin Live", reason)
