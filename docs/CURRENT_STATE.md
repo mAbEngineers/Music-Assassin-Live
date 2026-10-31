@@ -265,6 +265,13 @@ that reason; item numbers are referenced across these docs.
 - **Musical noise:** how much is an acceptable price for a kept syllable?
 - **StemgenRT's licence:** its training data is non-commercial (MUSDB18-HQ,
   MoisesDB). That decides whether it can be bundled.
+- **Code signing for Windows** (raised by the user 2026-10-31, who hit the
+  warnings installing 0.1.5): the installer is unsigned, so SmartScreen
+  warns and UAC says "Publisher: Unknown". Costs money and needs identity
+  verification, and since June 2023 the key must sit on certified hardware,
+  so there is no free route. Options and rough costs are in
+  `packaging/windows/README.md` "Unsigned: the two warnings". Nothing in
+  the code can change this.
 
 ## Working here: things that bite
 

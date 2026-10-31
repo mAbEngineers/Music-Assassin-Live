@@ -80,7 +80,51 @@ CI builds now carry the real model weights, fetched from the `models-v1`
 release against pinned SHA-256s (`scripts/fetch_models.py`), so the artifact
 is an app that can actually process audio rather than a compile check.
 
-Builds are unsigned, so SmartScreen warns on first run.
+Builds are unsigned. See "Unsigned: the two warnings" below — it is a cost
+decision, not a defect, and nothing in this repository can remove it.
+
+## Unsigned: the two warnings
+
+Two different dialogs, routinely conflated, with different causes:
+
+- **"Windows protected your PC"** — Microsoft Defender SmartScreen. It
+  judges a download on reputation and signature, and a brand-new unsigned
+  installer has neither. *More info* → *Run anyway*.
+- **"Publisher: Unknown"** on the UAC elevation prompt — no Authenticode
+  signature. The installer needs admin (`PrivilegesRequired=admin`, for
+  Program Files and the driver), so this prompt appears either way; signing
+  only changes the publisher line from Unknown to a name.
+
+Neither is a fault in the build. Things that do **not** fix it:
+
+- `--onedir` instead of `--onefile`. SmartScreen judges the downloaded
+  installer, which is unsigned either way. The ROADMAP D3.5 note implying
+  otherwise is wrong; onefile's real costs are `%TEMP%` re-extraction on
+  every launch and AV heuristics against the extracted exe.
+- A self-signed certificate. Untrusted by default, so UAC still reads
+  Unknown on any machine that has not installed the root — and teaching a
+  user to install a root certificate to silence a warning is worse than the
+  warning.
+- Submitting the file to Microsoft. That clears a false-positive *block*;
+  it does not make an unsigned file signed.
+
+What fixes it is an Authenticode certificate, which costs money and
+requires identity verification — a maintainer decision, not a task. Since
+June 2023 the private key must live on certified hardware (a USB token or a
+cloud HSM), so file-based certificates cheap enough to ignore no longer
+exist. Rough shape of the routes, all of which need re-pricing and
+re-checking for eligibility before anyone buys one:
+
+| Route | Rough cost | What it gets |
+| --- | --- | --- |
+| Azure Trusted Signing | ~$10/month | Microsoft-operated, signs from CI; identity validation required, and eligibility rules have changed more than once |
+| OV certificate (Sectigo, SSL.com, DigiCert) | ~$200-400/year | Publisher name appears immediately; SmartScreen reputation still accrues with downloads |
+| EV certificate | ~$400-700/year | Best SmartScreen behaviour from day one |
+| Microsoft Store | listing fee | The Store signs for you, but changes how the app is distributed and sandboxed |
+
+Until one is chosen, say so when handing a build to anyone: the warning is
+expected, and a user who is told to expect it is not being trained to click
+through warnings in general.
 
 ## Before shipping a build with VB-CABLE bundled
 
