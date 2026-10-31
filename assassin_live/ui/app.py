@@ -25,6 +25,7 @@ text, so the toggle that is on and the stream that died never wear the same
 colour in the same place.
 """
 
+import atexit
 import json
 import math
 import os
@@ -36,6 +37,7 @@ import tkinter.font as tkfont
 from pathlib import Path
 from tkinter import messagebox
 
+from .. import diagnostics
 from ..audio.engine import AudioEngine
 from ..audio.routing import RoutingSession
 from ..paths import models_dir, SETTINGS_FILE
@@ -196,6 +198,15 @@ class App:
         self._busy = False
         self._result = None
         RoutingSession.recover_stale()
+
+        # Three ways out of here that are not _quit(), and all of them used
+        # to leave the cable holding the system default -- which is a silent
+        # machine, with no message and nothing obviously wrong in Sound
+        # settings. recover_stale() above only helps on the *next* launch.
+        diagnostics.attach_to_tk(self.root)
+        diagnostics.set_restore_hook(self._emergency_restore)
+        atexit.register(self._emergency_restore)
+
         self.root.after(1000, self._tick)
         self.root.after(90, self._wave_tick)
 
@@ -1291,6 +1302,39 @@ class App:
         elif not self.enabled and not self._holding():
             self._say("idle", hold=False)
             self.details.config(text="")
+
+    def _emergency_restore(self) -> None:
+        """Give the system default back, from a context that may be broken.
+
+        Called from atexit, from the crash hooks and from a Tk callback that
+        raised, so it assumes nothing: routing may be mid-operation, the
+        engine thread may already be dead, Tk may be unusable. Two rules
+        follow -- it must not raise, and it must be safe to call twice,
+        since atexit fires after a crash hook has already run.
+
+        disable() first because it knows which device the user was on;
+        recover_stale() second because it reads the state file written
+        before the swap and so works even if this object is past using.
+        Both are no-ops if we never took the default in the first place.
+        """
+        if not getattr(self, "enabled", False):
+            return
+        self.enabled = False        # first, so a second call does nothing
+        # getattr, not self.engine: the attribute is only created when a
+        # stream starts, and this method's whole premise is that it runs in
+        # a state nothing else is prepared for.
+        engine = getattr(self, "engine", None)
+        try:
+            if engine is not None:
+                engine.stop()
+            self.routing.disable()
+        except Exception:           # noqa: BLE001
+            # recover_stale needs none of this object: it reads the state
+            # file written before the swap. Last line of defence.
+            try:
+                RoutingSession.recover_stale()
+            except Exception:       # noqa: BLE001
+                pass
 
     def _quit(self):
         self._save_settings()

@@ -78,7 +78,12 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 DefaultDirName={autopf}\Music Assassin Live
-DefaultGroupName=Music Assassin Live
+; Shortcuts go straight into Programs, NOT into a {group} subfolder: on
+; Windows 10/11 a program group is rendered as a collapsed folder in the
+; Start menu, so the app showed up as a folder you had to open rather than
+; as an app -- which is what the first user asked about. With no group there
+; is nothing for the group page to configure either.
+DisableProgramGroupPage=yes
 LicenseFile=..\..\LICENSE
 OutputDir={#OutputDir}
 OutputBaseFilename=music-assassin-live-setup-{#MyAppVersion}
@@ -106,27 +111,53 @@ Name: "vbcable"; Description: "Install VB-CABLE virtual audio driver (required t
 
 [Files]
 Source: "{#ExeDir}\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+; Installed as a file of its own so the shortcuts can point at it; see the
+; icon-cache note in [Icons]. Same .ico that is embedded in the exe.
+Source: "..\icons\music-assassin-live.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\models\*"; DestDir: "{app}\models"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#StageDir}\model-licenses\*"; DestDir: "{app}\model-licenses"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 #ifdef BundleVBCable
 Source: "vendor\VBCABLE_Setup_x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
 #endif
 
+[InstallDelete]
+; The program group earlier versions created. Left behind it is an empty
+; Start-menu folder sitting next to the new shortcut. Safe to name as a
+; directory: the shortcut below is "Music Assassin Live.lnk" in the same
+; parent, so the two never collide on disk.
+Type: filesandordirs; Name: "{autoprograms}\Music Assassin Live"
+
 [Icons]
-Name: "{group}\Music Assassin Live"; Filename: "{app}\{#MyAppExeName}"
-Name: "{group}\Uninstall Music Assassin Live"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\Music Assassin Live"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+; IconFilename is explicit, pointing at a file rather than at the exe's
+; embedded icon, because of Explorer's icon cache: it keys on the icon
+; source, and an upgrade that changes the artwork inside an exe at a path
+; it has already cached keeps drawing the old one. The taskbar updated and
+; the desktop shortcut did not, for exactly this reason. Naming a separate
+; file gives the cache a key it has never seen.
+Name: "{autoprograms}\Music Assassin Live"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\music-assassin-live.ico"
+Name: "{autodesktop}\Music Assassin Live"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\music-assassin-live.ico"; Tasks: desktopicon
+; The way back from a crash, for the user whose sound is going to the cable
+; and whose app is no longer running to put it back. --recover restores the
+; default endpoint and says so; see assassin_live/__main__.py.
+Name: "{autoprograms}\Restore my speakers (Music Assassin Live)"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--recover"; IconFilename: "{app}\music-assassin-live.ico"; Comment: "Point Windows playback back at your speakers"
 
 [Registry]
 ; Lets assassin_live/paths.py find the bundled models with zero code changes
 ; (models_dir() already checks MUSIC_ASSASSIN_MODELS first).
-Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "MUSIC_ASSASSIN_MODELS"; ValueData: "{app}\models"; Flags: preservestringtype
+; uninsdeletevalue because without it this survives the uninstall, and a
+; stale MUSIC_ASSASSIN_MODELS pointing into a deleted Program Files
+; directory is read by paths.models_dir() ahead of everywhere else.
+Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "MUSIC_ASSASSIN_MODELS"; ValueData: "{app}\models"; Flags: preservestringtype uninsdeletevalue
 
 [Run]
 ; VB-CABLE is NOT run from here any more, in bundled builds either: the
 ; driver install is sequenced in Pascal (EnsureVBCable) so that download,
 ; verification, extraction and the reboot flag are one decision with one set
 ; of error paths. A [Run] entry here as well would install it twice.
+; Nudges Explorer to rebuild its icon cache. Belt to the IconFilename
+; braces in [Icons]: between them, an upgrade that changes the artwork
+; actually shows the new artwork. Harmless if it is absent or refuses.
+Filename: "{sys}\ie4uinit.exe"; Parameters: "-show"; Flags: runhidden skipifdoesntexist
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch Music Assassin Live"; Flags: nowait postinstall skipifsilent
 
 [Code]
@@ -351,5 +382,56 @@ begin
   begin
     EnsureVBCable;
     RefreshEnvironment;
+  end;
+end;
+
+function UpdateReadyMemo(const Space, NewLine, MemoUserInfoInfo, MemoDirInfo,
+  MemoTypeInfo, MemoComponentsInfo, MemoGroupInfo, MemoTasksInfo: String): String;
+begin
+  { Says out loud that the driver step is being skipped, and why. Hiding the
+    task when a cable is already present is correct -- re-running the
+    installer should not re-offer a driver install -- but from the outside it
+    reads as the installer having forgotten to ask, which is how it was
+    reported. There is no [Components] or [Types] section and the program
+    group page is disabled, so directory and tasks are the whole memo. }
+  Result := MemoDirInfo;
+  if MemoTasksInfo <> '' then
+    Result := Result + NewLine + NewLine + MemoTasksInfo;
+  if VBCableAppearsInstalled then
+    Result := Result + NewLine + NewLine + 'Virtual audio device:' + NewLine +
+              Space + 'VB-CABLE is already installed, so the driver step ' +
+              'will be skipped.';
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  ResultCode: Integer;
+begin
+  if CurUninstallStep = usUninstall then
+  begin
+    { Before the exe is deleted, while it can still undo its own routing.
+      Uninstalling while the filter is on would otherwise leave the cable
+      holding the system default and no app left to hand it back. --headless
+      keeps it silent: nobody wants a dialog mid-uninstall. }
+    if FileExists(ExpandConstant('{app}\{#MyAppExeName}')) then
+      Exec(ExpandConstant('{app}\{#MyAppExeName}'), '--recover --headless', '',
+           SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  end;
+
+  if CurUninstallStep = usPostUninstall then
+  begin
+    if VBCableAppearsInstalled then
+      MsgBox('Music Assassin Live has been removed.' + #13#10#13#10 +
+             'VB-CABLE has been left installed, which is why "CABLE Input" ' +
+             'and "CABLE In 16ch" are still listed among your playback ' +
+             'devices. It is a separate driver from VB-Audio, not part of ' +
+             'this app, and other software may be using it -- so removing ' +
+             'it is not something this uninstaller does for you.' + #13#10#13#10 +
+             'To remove it yourself: run VBCABLE_Setup_x64.exe from the ' +
+             'VB-CABLE download as administrator and choose Remove Driver, ' +
+             'then reboot.' + #13#10#13#10 +
+             'If sound is still going nowhere, open Sound settings and ' +
+             'choose your speakers or headphones as the output device.',
+             mbInformation, MB_OK);
   end;
 end;

@@ -38,7 +38,34 @@ def _report_unsupported(reason: str, gui: bool) -> None:
         pass    # no display or no tk: stderr above is the fallback
 
 
+def _say_recovered() -> None:
+    """Confirm the restore in a window, for the no-console build."""
+    try:
+        import tkinter
+        from tkinter import messagebox
+
+        from .ui.app import enable_dpi_awareness
+        enable_dpi_awareness()
+        root = tkinter.Tk()
+        root.withdraw()
+        messagebox.showinfo(
+            "Music Assassin Live",
+            "Your normal playback device has been restored.\n\n"
+            "If sound is still going to the virtual cable, open Sound "
+            "settings and choose your speakers or headphones there.")
+        root.destroy()
+    except Exception:       # noqa: BLE001
+        pass    # no display or no tk: the printed line above is the fallback
+
+
 def main():
+    # Before anything can fail. On the --windowed Windows build stderr goes
+    # nowhere, so without this a crash is not just unreported, it is
+    # unrecorded: the first long run on hardware died with no trace of why
+    # anywhere on the machine. See diagnostics.py.
+    from . import diagnostics
+    diagnostics.install()
+
     ap = argparse.ArgumentParser(prog="assassin_live")
     ap.add_argument("--headless", action="store_true",
                     help="no GUI; enable filter until Ctrl-C")
@@ -83,6 +110,12 @@ def main():
         from .audio.routing import RoutingSession
         RoutingSession.recover_stale()
         print("recovered")
+        if not args.headless:
+            # This is the Start-menu "Restore my speakers" shortcut, clicked
+            # by someone whose machine has gone quiet. A --windowed build
+            # prints to nobody, so silently exiting looks like a shortcut
+            # that does nothing -- the same complaint, now about the fix.
+            _say_recovered()
         return
 
     if not args.headless:

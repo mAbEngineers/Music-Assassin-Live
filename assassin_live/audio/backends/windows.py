@@ -64,6 +64,36 @@ TRAP_CAPTURE_NAMES = (
     "Virtual Audio Cable",
 )
 
+# Render endpoints that must never be treated as hardware, whether or not we
+# trap through them. Being a superset of TRAP_RENDER_NAMES is the point: a
+# virtual endpoint we do not trap through is still not somewhere audio can
+# come out, so it is neither a destination for the processed signal nor a
+# device to hand the default back to.
+#
+# This cost a user their audio. VB-CABLE installs a second endpoint pair,
+# "CABLE In 16ch" / "CABLE Out 16ch", alongside "CABLE Input" -- and
+# "CABLE Input" is not a substring of "CABLE In 16ch", so _matches() said no
+# and the backend filed it under speakers. Two ways that ends badly, both of
+# them silent: _pick_real_in() can render the processed audio into it, and
+# disable()'s last-resort fallback can make it the default on the way out,
+# so turning the app off leaves the machine quiet with the real speakers
+# untouched and no error anywhere.
+#
+# Names, not device topology, because an endpoint carries no "am I real"
+# property: DEVICE_STATE_ACTIVE is true of a virtual cable, and the
+# enumeration API has nothing else to ask. The list is therefore
+# best-effort, and anything new goes here rather than into a bug report.
+VIRTUAL_RENDER_NAMES = TRAP_RENDER_NAMES + (
+    "CABLE In 16ch",            # VB-CABLE, installed with CABLE Input
+    "CABLE-A Input",            # VB-CABLE A+B
+    "CABLE-B Input",
+    "CABLE-C Input",            # VB-CABLE C+D
+    "CABLE-D Input",
+    "Hi-Fi Cable Input",        # VB-Audio Hi-Fi Cable
+    "VoiceMeeter Aux Input",
+    "VoiceMeeter VAIO3 Input",
+)
+
 # Named for symmetry with pipewire.py, which ui/app.py imports to filter the
 # trap out of the output picker. The filter is a no-op here -- list_sinks()
 # already excludes the trap, and SinkInfo.name carries an endpoint id rather
@@ -388,8 +418,13 @@ class WindowsBackend:
 
     # -- endpoint enumeration ---------------------------------------------
     @staticmethod
-    def _to_sinks(endpoints, include_trap: bool = False) -> list:
+    def _to_sinks(endpoints, include_virtual: bool = False) -> list:
         """Turn one already-fetched endpoint list into SinkInfo.
+
+        Virtual endpoints are dropped unless include_virtual, which only the
+        by-id lookup in _sink_for_in() passes: everything else here is
+        asking "where can sound actually come out", and the answer must
+        never include a cable. See VIRTUAL_RENDER_NAMES.
 
         Separate from _sinks() so a single operation can enumerate once and
         then ask several questions of the answer. That is partly about cost
@@ -401,12 +436,13 @@ class WindowsBackend:
         """
         out = []
         for idx, (eid, friendly) in enumerate(endpoints):
-            if not include_trap and _matches(friendly, TRAP_RENDER_NAMES):
+            if not include_virtual and _matches(friendly,
+                                               VIRTUAL_RENDER_NAMES):
                 continue
             out.append(SinkInfo(id=idx, name=eid, description=friendly))
         return out
 
-    def _sinks(self, include_trap: bool = False) -> list:
+    def _sinks(self, include_virtual: bool = False) -> list:
         """Render endpoints as SinkInfo.
 
         SinkInfo.id is an int nothing reads on this platform (ui/app.py
@@ -418,7 +454,7 @@ class WindowsBackend:
         restarts. The friendly name goes in description, which is what the
         UI displays.
         """
-        return self._to_sinks(self._core.render_endpoints(), include_trap)
+        return self._to_sinks(self._core.render_endpoints(), include_virtual)
 
     @staticmethod
     def _find_trap(endpoints) -> "str | None":
@@ -434,22 +470,44 @@ class WindowsBackend:
     def _sink_for_in(cls, endpoints, endpoint_id: str) -> "SinkInfo | None":
         if not endpoint_id:
             return None
-        for s in cls._to_sinks(endpoints, include_trap=True):
+        for s in cls._to_sinks(endpoints, include_virtual=True):
             if s.name == endpoint_id:
                 return s
         return None
 
     @classmethod
+    def _hardware_id_in(cls, endpoints, endpoint_id) -> "str | None":
+        """endpoint_id back, but only if it is present and not virtual.
+
+        The one question worth asking of any endpoint id we are about to
+        make the default: can sound come out of it. Returns None rather
+        than the id for "no", so callers can treat a cable and a device
+        that has been unplugged as the same thing, which they are.
+        """
+        if not endpoint_id:
+            return None
+        return next((s.name for s in cls._to_sinks(endpoints)
+                     if s.name == endpoint_id), None)
+
+    @classmethod
     def _pick_real_in(cls, endpoints, preferred_name, fallback):
         """The endpoint to play to: the user's choice if it is still here,
-        else the caller's fallback, else anything that is not the trap."""
+        else the caller's fallback, else any hardware output.
+
+        Every branch is filtered through _to_sinks(), so none of them can
+        return a virtual endpoint -- including the fallback, which enable()
+        builds with _sink_for_in() and therefore does NOT pre-filter. If the
+        endpoint that held the default was itself a cable, playing to it is
+        how the processed audio disappears.
+        """
+        real = cls._to_sinks(endpoints)
         if preferred_name:
-            for s in cls._to_sinks(endpoints):
+            for s in real:
                 if s.name == preferred_name:
                     return s
-        if fallback is not None:
+        if fallback is not None and any(s.name == fallback.name for s in real):
             return fallback
-        return next(iter(cls._to_sinks(endpoints)), None)
+        return next(iter(real), None)
 
     # -- crash recovery ----------------------------------------------------
     @staticmethod
@@ -476,17 +534,33 @@ class WindowsBackend:
             previous = None
         finally:
             ROUTING_STATE.unlink(missing_ok=True)
-        if not previous:
-            return
+        # No early return on a missing previous: the state file existing at
+        # all is the evidence we died mid-session, and the rescue below does
+        # not need to know which device we took the default from.
         core = core if core is not None else CoreAudio()
         endpoints = core.render_endpoints()
-        trap = WindowsBackend._find_trap(endpoints)
         current = core.default_render_endpoint()
-        # Only intervene while the trap is still holding the default. If the
-        # user has picked something themselves since the crash, that is a
-        # newer decision than anything in our state file.
-        if trap and current == trap and any(eid == previous
-                                            for eid, _ in endpoints):
+        # Only intervene while a virtual endpoint is still holding the
+        # default. If the user has picked something themselves since the
+        # crash, that is a newer decision than anything in our state file.
+        #
+        # Any virtual endpoint, not just the trap: a build before this one
+        # could hand the default to "CABLE In 16ch" on the way out (see
+        # VIRTUAL_RENDER_NAMES), and a machine left that way is exactly the
+        # one that needs rescuing. previous is filtered the same way, since
+        # an old state file can be carrying one of those too.
+        held_by_cable = _matches(dict(endpoints).get(current, ""),
+                                 VIRTUAL_RENDER_NAMES)
+        previous = WindowsBackend._hardware_id_in(endpoints, previous)
+        if not held_by_cable:
+            return
+        if not previous:
+            # We know we died mid-session (there was a state file), and a
+            # cable still holds the default, so doing nothing leaves the
+            # machine mute. Any hardware output beats that.
+            first = next(iter(WindowsBackend._to_sinks(endpoints)), None)
+            previous = first.name if first is not None else None
+        if previous:
             core.set_default_render_endpoint(previous)
 
     # -- lifecycle ---------------------------------------------------------
@@ -519,9 +593,13 @@ class WindowsBackend:
             return None
         trap = self._sink_for_in(endpoints, trap_id)
 
-        previous = self._core.default_render_endpoint()
-        if previous == trap_id:
-            previous = None         # a stale trap default is not worth restoring
+        # Only a hardware endpoint is worth restoring. A virtual one would be
+        # written to ROUTING_STATE and then faithfully handed back by
+        # disable() or recover_stale() -- a silent machine, recorded as a
+        # successful restore. The trap is just the commonest case of that,
+        # not a special one.
+        previous = self._hardware_id_in(
+            endpoints, self._core.default_render_endpoint())
         real = self._pick_real_in(
             endpoints, self.preferred_name,
             self._sink_for_in(endpoints, previous))
@@ -564,8 +642,13 @@ class WindowsBackend:
         found the sound settings themselves.
         """
         endpoints = self._core.render_endpoints()
-        target = self.real.name if self.real is not None else None
-        if target is None or not any(eid == target for eid, _ in endpoints):
+        # Every candidate goes through _hardware_id_in, so none of them can
+        # be a cable. Handing the default to a virtual endpoint is how
+        # "turn it off" used to end in silence: it looks like a restore,
+        # reports like a restore, and plays nothing.
+        target = self._hardware_id_in(
+            endpoints, self.real.name if self.real is not None else None)
+        if target is None:
             # Whatever we recorded before the swap, if it is still here.
             previous = None
             try:
@@ -574,12 +657,12 @@ class WindowsBackend:
                         ROUTING_STATE.read_text()).get("previous_default")
             except Exception:
                 previous = None
-            if previous and any(eid == previous for eid, _ in endpoints):
-                target = previous
-            else:
-                # Anything at all, as long as it is not the cable.
-                fallback = next(iter(self._to_sinks(endpoints)), None)
-                target = fallback.name if fallback is not None else None
+            target = self._hardware_id_in(endpoints, previous)
+        if target is None:
+            # Any hardware output at all. Better a device the user did not
+            # choose than a cable: one is wrong, the other is mute.
+            fallback = next(iter(self._to_sinks(endpoints)), None)
+            target = fallback.name if fallback is not None else None
         if target:
             self._core.set_default_render_endpoint(target)
         self.trap = self.real = None
