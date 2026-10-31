@@ -31,10 +31,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y python3-tk libportaudio2
 
+      # Pillow is a TOOL dependency, not an app one -- it is deliberately
+      # absent from requirements.txt so it cannot reach a build. It is
+      # installed here so test_icon_assets actually runs instead of skipping:
+      # the .ico and the drawn icon had silently diverged for 13 days and
+      # shipped a Windows build with the previous artwork on the taskbar.
       - name: Python packages
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip install pillow
 
       # The same entry point developers run. If the two ever diverge, CI
       # stops meaning what it appears to mean.

@@ -43,6 +43,8 @@ on:
       - 'scripts/fetch_models.py'
       - 'tests/test_platform_guard.py'
       - 'tests/test_windows_routing.py'
+      - 'tests/test_windows_com_thread.py'
+      - 'tests/test_crash_report.py'
       - '.github/workflows/windows-build.yml'
   pull_request:
     paths:
@@ -56,6 +58,8 @@ on:
       - 'scripts/fetch_models.py'
       - 'tests/test_platform_guard.py'
       - 'tests/test_windows_routing.py'
+      - 'tests/test_windows_com_thread.py'
+      - 'tests/test_crash_report.py'
       - '.github/workflows/windows-build.yml'
   workflow_dispatch:
 
@@ -104,6 +108,29 @@ jobs:
           if errorlevel 1 exit /b 1
           exit /b 0
 
+      # The enumeration above runs on the main thread, where comtypes has
+      # already called CoInitialize() for us. ui/app.py does enable() on a
+      # worker thread, which it had not -- so the first on-hardware run saw
+      # zero endpoints and blamed the user's speakers. A runner has no audio
+      # devices, but it does have COM, so this is catchable here.
+      - name: Assert Core Audio works from a worker thread, not just the main one
+        shell: cmd
+        run: |
+          .venv\Scripts\python.exe tests\test_windows_com_thread.py
+          if errorlevel 1 exit /b 1
+          exit /b 0
+
+      # Runs on Linux too, but this is the platform it exists for: the
+      # shipped build is --windowed, so a traceback that is not written to
+      # the crash log is not written anywhere, and a crash that does not
+      # hand the default endpoint back leaves the machine silent.
+      - name: Assert a crash is recorded and the routing handed back
+        shell: cmd
+        run: |
+          .venv\Scripts\python.exe tests\test_crash_report.py
+          if errorlevel 1 exit /b 1
+          exit /b 0
+
       # The app must refuse to run here, cleanly, and for the right reason:
       # on a runner there is no virtual cable, which is a different refusal
       # from the "no backend for this platform" one this used to get. If this
@@ -126,6 +153,27 @@ jobs:
             exit /b 0
           )
           echo ERROR: the app started with no cable installed instead of refusing >&2
+          exit /b 1
+
+      # The installer calls this to decide whether it still has to install a
+      # driver, so its exit codes are a contract, not an implementation
+      # detail. A runner has comtypes and pycaw but no cable, which is
+      # exactly the "1" case -- and a 3 here would mean the installer
+      # silently falls back to the registry guess that caused the bug this
+      # flag exists to fix.
+      - name: Assert --check-cable reports no cable, with the documented code
+        shell: cmd
+        run: |
+          .venv\Scripts\python.exe -m assassin_live --check-cable
+          if errorlevel 2 (
+            echo ERROR: --check-cable could not determine; expected exit 1 >&2
+            exit /b 1
+          )
+          if errorlevel 1 (
+            echo OK: reported no cable with exit 1
+            exit /b 0
+          )
+          echo ERROR: --check-cable claims a cable exists on a runner >&2
           exit /b 1
 
       # 6.4.3 specifically: 6.5.0+ added a paid commercial-license tier, so

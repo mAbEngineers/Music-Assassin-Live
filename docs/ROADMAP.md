@@ -2086,9 +2086,12 @@ either alternative.
   another app stealing the default device, unplugging headphones mid-playback,
   the volume keys, crash recovery.
 
-Also decide `--onedir` over `--onefile` for Windows: unsigned onefile binaries
-draw SmartScreen warnings and re-extract to `%TEMP%` on every launch. Code
-signing is a separate cost decision, not a blocker.
+Also decide `--onedir` over `--onefile` for Windows. Note the original form of
+this item was wrong on the reason: SmartScreen judges the downloaded
+*installer*, which is unsigned either way, so `--onedir` does nothing for it.
+The real costs of onefile are `%TEMP%` re-extraction on every launch and AV
+heuristics against the extracted exe. Code signing is a separate cost
+decision, not a blocker — options in `packaging/windows/README.md`.
 
 ### D4. Windows licensing — settled 2026-08-20
 

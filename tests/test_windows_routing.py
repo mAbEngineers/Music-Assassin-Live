@@ -30,9 +30,16 @@ CABLE = "{0.0.0.00000000}.{cable-0000-0000-0000-000000000000}"
 SPEAKERS = "{0.0.0.00000000}.{spkrs-1111-1111-1111-111111111111}"
 HEADSET = "{0.0.0.00000000}.{hdset-2222-2222-2222-222222222222}"
 HDMI = "{0.0.0.00000000}.{hdmi0-3333-3333-3333-333333333333}"
+# VB-CABLE's *other* render endpoint, installed alongside CABLE Input and
+# present on every machine that has the cable. Its name does not contain
+# "CABLE Input", so the trap match misses it -- which is why it is in these
+# fixtures rather than only in the one test about it. Anything that treats
+# this as a speaker is a bug that ends in silence.
+CABLE16 = "{0.0.0.00000000}.{cab16-4444-4444-4444-444444444444}"
 
 FRIENDLY = {
     CABLE: "CABLE Input (VB-Audio Virtual Cable)",
+    CABLE16: "CABLE In 16ch (VB-Audio Virtual Cable)",
     SPEAKERS: "Speakers (Realtek(R) Audio)",
     HEADSET: "Headphones (WH-1000XM4 Stereo)",
     HDMI: "Digital Audio (HDMI)",
@@ -206,6 +213,52 @@ def test_enable_reports_a_refused_switch():
         assert b.enable() is None, "claimed success when the switch failed"
         assert not state.exists(), "left a recovery file for a swap that failed"
         print("  switch refused -> enable() fails loudly, state cleaned up")
+    _isolated(go)
+
+
+def test_each_enable_failure_says_which_one_it_was():
+    """All four failures return None, so the return value cannot tell them
+    apart -- and ui/app.py showed "No hardware audio sink found (Bluetooth
+    asleep?)" for every one of them. That sentence sent the first real
+    Windows test looking at its speakers when COM was the problem.
+    """
+    def go(state):
+        cases = []
+
+        core = FakeCoreAudio(present=[], default=None)
+        cases.append(("nothing enumerated", backend(core), "fault in the app"))
+
+        core = FakeCoreAudio(present=[SPEAKERS], default=SPEAKERS)
+        cases.append(("no cable", backend(core), "no longer installed"))
+
+        core = FakeCoreAudio(present=[CABLE], default=CABLE)
+        cases.append(("cable only", backend(core), "no other output device"))
+
+        core = FakeCoreAudio()
+        core.refuse = True
+        cases.append(("switch refused", backend(core), "refused"))
+
+        seen = []
+        for label, b, expected in cases:
+            assert b.enable() is None, f"{label}: enabled anyway"
+            why = b.last_enable_error
+            assert why, f"{label}: failed without saying why"
+            assert expected in why, f"{label}: {why!r} does not mention {expected!r}"
+            assert "Bluetooth" not in why, f"{label}: still blaming Bluetooth"
+            seen.append(why)
+            print(f"  {label:<18} -> {why.split('.')[0][:58]}")
+
+        assert len(set(seen)) == len(seen), "two failures give the same message"
+    _isolated(go)
+
+
+def test_a_successful_enable_clears_the_last_error():
+    def go(state):
+        b = backend(FakeCoreAudio())
+        b.last_enable_error = "stale text from a previous attempt"
+        assert b.enable() is not None
+        assert b.last_enable_error is None, "kept a stale failure message"
+        print("  enable ok      -> last_enable_error cleared")
     _isolated(go)
 
 
@@ -445,13 +498,145 @@ def test_recover_stale_defers_to_a_newer_user_choice():
     _isolated(go)
 
 
-def test_recover_stale_skips_a_device_that_is_gone():
+def test_recover_stale_rescues_when_the_recorded_device_is_gone():
+    """A missing previous device is not a reason to leave the machine mute.
+
+    This test used to assert the opposite -- that recovery makes "no
+    pointless switch attempt" and gives up. It is not pointless: the state
+    file existing at all means we died mid-session, and a cable is holding
+    the default, so giving up is how a user ends up with no audio, nothing
+    on screen, and no idea that Sound settings is where to look. Any real
+    output beats that, even one they did not choose.
+    """
     def go(state):
         state.write_text(json.dumps({"previous_default": HEADSET, "ts": 1}))
         core = FakeCoreAudio(present=[CABLE, SPEAKERS], default=CABLE)
         WindowsBackend.recover_stale(core)
-        assert core.switches == [], "tried to restore an absent endpoint"
-        print("  device gone    -> no pointless switch attempt")
+        assert core.default == SPEAKERS, (
+            f"left the cable holding the default: {core.default}")
+        print("  device gone    -> falls back to a real output anyway")
+    _isolated(go)
+
+
+# -- a cable is never a speaker ---------------------------------------------
+# Regression tests for the fault that cost a user their audio: "CABLE In
+# 16ch" classed as hardware, so it could be rendered into and, worse, handed
+# the system default on the way out. See VIRTUAL_RENDER_NAMES.
+
+def test_a_second_cable_endpoint_is_not_offered_as_hardware():
+    core = FakeCoreAudio(present=[CABLE, CABLE16, SPEAKERS], default=SPEAKERS)
+    names = [s.name for s in backend(core)._sinks()]
+    assert names == [SPEAKERS], f"offered a cable as an output: {names}"
+    print("  16ch endpoint  -> excluded from the output list")
+
+
+def test_enable_never_renders_into_a_cable():
+    """The trap already holds the default and a cable enumerates first.
+
+    Both fallbacks in _pick_real_in() are exercised: previous is the trap so
+    it is discarded, and the first endpoint in enumeration order is the
+    other cable.
+    """
+    def go(state):
+        core = FakeCoreAudio(present=[CABLE16, CABLE, SPEAKERS], default=CABLE)
+        real = backend(core).enable()
+        assert real is not None, "refused to start with speakers present"
+        assert real.name == SPEAKERS, f"chose {FRIENDLY[real.name]}"
+        print("  destination    -> speakers, not the first cable in the list")
+    _isolated(go)
+
+
+def test_disable_never_hands_the_default_to_a_cable():
+    """The output device vanishes mid-session, which is the path that bit.
+
+    self.real is None here because that is what check() leaves behind when
+    it reports real_sink_lost -- unplug the only speaker and ui/app.py turns
+    off, landing straight in disable() with nothing recorded to go back to.
+    """
+    def go(state):
+        core = FakeCoreAudio(present=[CABLE16, CABLE, SPEAKERS, HEADSET],
+                             default=SPEAKERS)
+        b = backend(core)
+        b.enable()
+        core.present.remove(SPEAKERS)       # the device we were playing to
+        b.real = None
+        b.disable()
+        assert core.default == HEADSET, (
+            f"handed the default to {FRIENDLY.get(core.default)}")
+        assert CABLE16 not in core.switches, "tried the 16ch cable"
+        print("  output lost    -> default goes to the headset, not a cable")
+    _isolated(go)
+
+
+def test_disable_leaves_the_default_alone_rather_than_pick_a_cable():
+    """With no hardware left there is nothing good to do, so do nothing.
+
+    Setting a cable here would report success and play nothing. Leaving the
+    trap in place is equally silent but at least stays honest, and the next
+    enable() or recover_stale() can still fix it once a device returns.
+    """
+    def go(state):
+        core = FakeCoreAudio(present=[CABLE16, CABLE, SPEAKERS],
+                             default=SPEAKERS)
+        b = backend(core)
+        b.enable()
+        core.present.remove(SPEAKERS)
+        b.real = None
+        b.disable()
+        assert core.switches == [CABLE], f"switched again: {core.switches}"
+        print("  no hardware    -> no cable handed the default")
+    _isolated(go)
+
+
+def test_trap_render_present_is_what_the_installer_asks():
+    """One source of truth for "is a cable installed".
+
+    The installer used to answer this itself by testing for VB-Audio's
+    registry key, and skipped the driver step on it. VB-CABLE's Remove
+    Driver leaves that key behind, so setup said "already installed,
+    skipping" while the app said "no virtual audio cable is installed" --
+    on the same machine, minutes apart. The installer now shells out to
+    --check-cable, which lands here.
+    """
+    assert windows.trap_render_present(
+        FakeCoreAudio(present=[CABLE, SPEAKERS])) is True
+    assert windows.trap_render_present(
+        FakeCoreAudio(present=[SPEAKERS, HEADSET])) is False
+    # The one that matters, and the reason this takes the trap list rather
+    # than the virtual list: 16ch is a cable, but it is not one we can trap
+    # through -- there is no CABLE Out 16ch capture side we read. A machine
+    # with only that endpoint has no usable cable.
+    assert windows.trap_render_present(
+        FakeCoreAudio(present=[CABLE16, SPEAKERS])) is False
+    print("  check-cable    -> endpoint-based, and 16ch alone is not a cable")
+
+
+def test_the_platform_layer_dispatches_the_cable_check():
+    """routing.py is the only place a platform is chosen; an installer flag
+    that bypassed it would be a second platform branch."""
+    from assassin_live.audio import routing
+    assert callable(routing.trap_render_present)
+    if sys.platform.startswith("linux"):
+        assert routing.trap_render_present() is None, (
+            "Linux needs no cable; None means 'does not apply', and False "
+            "would read as 'go install a driver'")
+    print("  dispatch       -> routing.trap_render_present, None on Linux")
+
+
+def test_recover_stale_rescues_a_default_left_on_a_second_cable():
+    """The machine a previous build could leave behind.
+
+    Before VIRTUAL_RENDER_NAMES, disable() could make "CABLE In 16ch" the
+    default and call that a restore. Recovery has to treat any cable holding
+    the default as the thing it is there to undo, not just the trap.
+    """
+    def go(state):
+        state.write_text(json.dumps({"previous_default": SPEAKERS, "ts": 1}))
+        core = FakeCoreAudio(present=[CABLE16, CABLE, SPEAKERS],
+                             default=CABLE16)
+        WindowsBackend.recover_stale(core)
+        assert core.default == SPEAKERS, f"left it on {core.default}"
+        print("  stale 16ch     -> recovered, not just the trap")
     _isolated(go)
 
 

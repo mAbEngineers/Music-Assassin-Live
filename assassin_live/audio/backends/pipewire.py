@@ -187,6 +187,18 @@ def list_sinks() -> list[SinkInfo]:
     return sinks
 
 
+def trap_render_present() -> "bool | None":
+    """None: the question does not apply here.
+
+    Dispatched from routing.py for symmetry with the Windows backend, which
+    the Windows installer queries to decide whether it still has to install
+    a virtual cable. Linux needs no cable at all -- PipeWire lets a sink be
+    created on demand -- so there is nothing to report, and None says that
+    rather than claiming a cable is missing.
+    """
+    return None
+
+
 def get_default_sink() -> SinkInfo | None:
     out = _run(["wpctl", "inspect", "@DEFAULT_AUDIO_SINK@"])
     m_id = re.search(r"^id (\d+)", out)

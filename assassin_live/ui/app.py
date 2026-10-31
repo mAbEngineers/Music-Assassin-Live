@@ -25,6 +25,7 @@ text, so the toggle that is on and the stream that died never wear the same
 colour in the same place.
 """
 
+import atexit
 import json
 import math
 import os
@@ -36,6 +37,7 @@ import tkinter.font as tkfont
 from pathlib import Path
 from tkinter import messagebox
 
+from .. import diagnostics
 from ..audio.engine import AudioEngine
 from ..audio.routing import RoutingSession
 from ..paths import models_dir, SETTINGS_FILE
@@ -94,10 +96,44 @@ def _icon_path() -> Path:
     return Path(__file__).resolve().parent / "assets" / "icon.png"
 
 
+def enable_dpi_awareness() -> None:
+    """Tell Windows this process does its own scaling, before any window.
+
+    Without it Windows reports 96 DPI to the process whatever the user's
+    display scaling is, so _ui_scale() computes 1.0, lays the window out at
+    1x, and Windows then bitmap-stretches the finished result to 125/150/200
+    %. Everything is legible but soft -- which is what "low res on Windows"
+    was. Nothing here is wrong on Linux; X11/Wayland report the real DPI.
+
+    PROCESS_SYSTEM_DPI_AWARE (1) rather than per-monitor: this window is a
+    fixed size and reads its scale once at startup, so it has no way to
+    re-lay itself out when dragged to a monitor with different scaling.
+    System awareness means Windows stretches it in that one case, instead of
+    leaving it crisp at the wrong physical size -- the better of the two.
+
+    Must run before the first Tk window exists: Windows latches the mode on
+    the first call of the process and ignores the rest. Idempotent, so the
+    several entry points that build a window can each just call it.
+    """
+    if not sys.platform.startswith("win"):
+        return
+    import ctypes
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        return
+    except Exception:       # noqa: BLE001
+        pass                # pre-8.1, or a manifest already set the mode
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:       # noqa: BLE001
+        pass                # nothing better available; soft beats crashing
+
+
 class App:
     def __init__(self):
         saved = self._load_settings()
         self.routing = RoutingSession()
+        enable_dpi_awareness()      # before tk.Tk() below, or it does nothing
         self.engine: AudioEngine | None = None
         self.mute_dry = saved.get("mute_dry", False)
         self.mute_wet = saved.get("mute_wet", False)
@@ -162,6 +198,15 @@ class App:
         self._busy = False
         self._result = None
         RoutingSession.recover_stale()
+
+        # Three ways out of here that are not _quit(), and all of them used
+        # to leave the cable holding the system default -- which is a silent
+        # machine, with no message and nothing obviously wrong in Sound
+        # settings. recover_stale() above only helps on the *next* launch.
+        diagnostics.attach_to_tk(self.root)
+        diagnostics.set_restore_hook(self._emergency_restore)
+        atexit.register(self._emergency_restore)
+
         self.root.after(1000, self._tick)
         self.root.after(90, self._wave_tick)
 
@@ -790,7 +835,10 @@ class App:
             real = self.routing.enable()
             if real is None:
                 self.routing.disable()
-                self._result = ("nosink", None, None)
+                # The backend may know which way it failed; "no sink" is only
+                # one of several and was the wrong guess on Windows.
+                self._result = ("nosink", None,
+                                getattr(self.routing, "last_enable_error", None))
                 return
             engine = AudioEngine(proc, self.routing)
             engine.set_intensity(self.mix_pct / 100.0)
@@ -843,9 +891,12 @@ class App:
         elif kind == "nosink":
             self.enabled = False
             self._paint_button("off")
-            self._say("no hardware output found — reconnect and try again", AMBER)
+            self._say("could not start — see the dialog", AMBER)
             messagebox.showwarning(
-                "No output device",
+                "Could not start",
+                extra or
+                # Linux/PipeWire still has no per-reason text, and there the
+                # sleeping-Bluetooth guess is usually right.
                 "No hardware audio sink found (Bluetooth asleep?). "
                 "Play something / reconnect and try again.")
         else:
@@ -1251,6 +1302,39 @@ class App:
         elif not self.enabled and not self._holding():
             self._say("idle", hold=False)
             self.details.config(text="")
+
+    def _emergency_restore(self) -> None:
+        """Give the system default back, from a context that may be broken.
+
+        Called from atexit, from the crash hooks and from a Tk callback that
+        raised, so it assumes nothing: routing may be mid-operation, the
+        engine thread may already be dead, Tk may be unusable. Two rules
+        follow -- it must not raise, and it must be safe to call twice,
+        since atexit fires after a crash hook has already run.
+
+        disable() first because it knows which device the user was on;
+        recover_stale() second because it reads the state file written
+        before the swap and so works even if this object is past using.
+        Both are no-ops if we never took the default in the first place.
+        """
+        if not getattr(self, "enabled", False):
+            return
+        self.enabled = False        # first, so a second call does nothing
+        # getattr, not self.engine: the attribute is only created when a
+        # stream starts, and this method's whole premise is that it runs in
+        # a state nothing else is prepared for.
+        engine = getattr(self, "engine", None)
+        try:
+            if engine is not None:
+                engine.stop()
+            self.routing.disable()
+        except Exception:           # noqa: BLE001
+            # recover_stale needs none of this object: it reads the state
+            # file written before the swap. Last line of defence.
+            try:
+                RoutingSession.recover_stale()
+            except Exception:       # noqa: BLE001
+                pass
 
     def _quit(self):
         self._save_settings()

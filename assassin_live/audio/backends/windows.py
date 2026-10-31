@@ -42,6 +42,7 @@ as RoutingSession on win32.
 
 import json
 import sys
+import threading
 import time
 
 from ...paths import ROUTING_STATE
@@ -61,6 +62,36 @@ TRAP_CAPTURE_NAMES = (
     "CABLE Output",
     "VoiceMeeter Output",
     "Virtual Audio Cable",
+)
+
+# Render endpoints that must never be treated as hardware, whether or not we
+# trap through them. Being a superset of TRAP_RENDER_NAMES is the point: a
+# virtual endpoint we do not trap through is still not somewhere audio can
+# come out, so it is neither a destination for the processed signal nor a
+# device to hand the default back to.
+#
+# This cost a user their audio. VB-CABLE installs a second endpoint pair,
+# "CABLE In 16ch" / "CABLE Out 16ch", alongside "CABLE Input" -- and
+# "CABLE Input" is not a substring of "CABLE In 16ch", so _matches() said no
+# and the backend filed it under speakers. Two ways that ends badly, both of
+# them silent: _pick_real_in() can render the processed audio into it, and
+# disable()'s last-resort fallback can make it the default on the way out,
+# so turning the app off leaves the machine quiet with the real speakers
+# untouched and no error anywhere.
+#
+# Names, not device topology, because an endpoint carries no "am I real"
+# property: DEVICE_STATE_ACTIVE is true of a virtual cable, and the
+# enumeration API has nothing else to ask. The list is therefore
+# best-effort, and anything new goes here rather than into a bug report.
+VIRTUAL_RENDER_NAMES = TRAP_RENDER_NAMES + (
+    "CABLE In 16ch",            # VB-CABLE, installed with CABLE Input
+    "CABLE-A Input",            # VB-CABLE A+B
+    "CABLE-B Input",
+    "CABLE-C Input",            # VB-CABLE C+D
+    "CABLE-D Input",
+    "Hi-Fi Cable Input",        # VB-Audio Hi-Fi Cable
+    "VoiceMeeter Aux Input",
+    "VoiceMeeter VAIO3 Input",
 )
 
 # Named for symmetry with pipewire.py, which ui/app.py imports to filter the
@@ -126,6 +157,44 @@ def _matches(friendly: str, candidates) -> bool:
     return False
 
 
+_com_state = threading.local()
+
+
+def _ensure_com() -> None:
+    """Initialise COM on the calling thread, once per thread.
+
+    comtypes calls CoInitialize() for the thread that imports it and no
+    other, and comtypes' default is apartment-threaded, so a thread we
+    spawned has no apartment and every COM call there fails with
+    CO_E_NOTINITIALIZED -- confirmed on Windows with comtypes 1.4.17,
+    OSError [WinError -2147221008] (tests/test_windows_com_thread.py).
+
+    That is the "no hardware audio sink found" report. ui/app.py runs
+    enable()/disable() on a worker thread so the Tk loop keeps painting, and
+    render_endpoints() swallows errors and returns [], which the backend then
+    correctly reads as "nothing to play to". The startup cable check runs on
+    the main thread and passes; the toggle runs on a worker and sees an empty
+    machine. Indistinguishable, from the outside, from having no speakers.
+
+    Note the asymmetry is an import-order accident, not a rule: whichever
+    thread imports comtypes first gets the apartment, and here that is always
+    the main thread because the startup check touches COM before any worker
+    exists. Initialising per thread removes the dependence entirely.
+
+    Called from every CoreAudio entry point rather than from the threads
+    themselves: the threads belong to the UI and the engine, and neither
+    should have to know that this backend speaks COM.
+    """
+    if getattr(_com_state, "ready", False):
+        return
+    try:
+        import comtypes
+        comtypes.CoInitialize()
+    except Exception:
+        pass        # already initialised on this thread, or no comtypes
+    _com_state.ready = True
+
+
 class CoreAudio:
     """Everything this backend needs from Windows Core Audio, and no more.
 
@@ -142,11 +211,13 @@ class CoreAudio:
     """
 
     def __init__(self):
-        self._policy = None
-        self._policy_tried = False
+        # The IPolicyConfig cache lives in _com_state, keyed by thread --
+        # see _policy_config(). Nothing instance-scoped survives here.
+        pass
 
     def render_endpoints(self) -> list:
         """Active render endpoints, as (endpoint_id, friendly_name)."""
+        _ensure_com()
         try:
             from pycaw.pycaw import AudioUtilities
             enumerator = AudioUtilities.GetDeviceEnumerator()
@@ -167,6 +238,7 @@ class CoreAudio:
 
     def default_render_endpoint(self) -> "str | None":
         """The endpoint id currently serving as the eConsole default."""
+        _ensure_com()
         try:
             from pycaw.pycaw import AudioUtilities
             dev = AudioUtilities.GetSpeakers()
@@ -187,9 +259,15 @@ class CoreAudio:
         return None
 
     def _policy_config(self):
-        if self._policy_tried:
-            return self._policy
-        self._policy_tried = True
+        # Cached per thread, not on self. An interface pointer belongs to the
+        # apartment that created it, so handing the UI thread's IPolicyConfig
+        # to the engine's worker thread is not something COM promises to
+        # honour -- and this object is shared by both.
+        _ensure_com()
+        if getattr(_com_state, "policy_tried", False):
+            return getattr(_com_state, "policy", None)
+        _com_state.policy_tried = True
+        _com_state.policy = None
         try:
             from ctypes import c_int, c_wchar_p
 
@@ -207,8 +285,9 @@ class CoreAudio:
                     (["in"], c_int, "role")))
                 iface = type("IPolicyConfig", (IUnknown,),
                              {"_iid_": GUID(iid), "_methods_": methods})
-                self._policy = CoCreateInstance(GUID(clsid), interface=iface)
-                return self._policy
+                _com_state.policy = CoCreateInstance(GUID(clsid),
+                                                     interface=iface)
+                return _com_state.policy
             except Exception:
                 continue
         return None
@@ -229,6 +308,7 @@ class CoreAudio:
 
     # -- endpoint volume ---------------------------------------------------
     def _endpoint_volume(self, endpoint_id: str):
+        _ensure_com()
         try:
             from comtypes import CLSCTX_ALL, POINTER, cast
             from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
@@ -292,6 +372,9 @@ class WindowsBackend:
         self._pending: SinkInfo | None = None
         self._pending_since: float = 0.0
         self._last_trap_volume: "tuple | None" = None
+        # Why the last enable() returned None. Read by ui/app.py, which
+        # otherwise has only "it failed" to show the user.
+        self.last_enable_error: str | None = None
 
     @property
     def settling(self) -> bool:
@@ -335,8 +418,13 @@ class WindowsBackend:
 
     # -- endpoint enumeration ---------------------------------------------
     @staticmethod
-    def _to_sinks(endpoints, include_trap: bool = False) -> list:
+    def _to_sinks(endpoints, include_virtual: bool = False) -> list:
         """Turn one already-fetched endpoint list into SinkInfo.
+
+        Virtual endpoints are dropped unless include_virtual, which only the
+        by-id lookup in _sink_for_in() passes: everything else here is
+        asking "where can sound actually come out", and the answer must
+        never include a cable. See VIRTUAL_RENDER_NAMES.
 
         Separate from _sinks() so a single operation can enumerate once and
         then ask several questions of the answer. That is partly about cost
@@ -348,12 +436,13 @@ class WindowsBackend:
         """
         out = []
         for idx, (eid, friendly) in enumerate(endpoints):
-            if not include_trap and _matches(friendly, TRAP_RENDER_NAMES):
+            if not include_virtual and _matches(friendly,
+                                               VIRTUAL_RENDER_NAMES):
                 continue
             out.append(SinkInfo(id=idx, name=eid, description=friendly))
         return out
 
-    def _sinks(self, include_trap: bool = False) -> list:
+    def _sinks(self, include_virtual: bool = False) -> list:
         """Render endpoints as SinkInfo.
 
         SinkInfo.id is an int nothing reads on this platform (ui/app.py
@@ -365,7 +454,7 @@ class WindowsBackend:
         restarts. The friendly name goes in description, which is what the
         UI displays.
         """
-        return self._to_sinks(self._core.render_endpoints(), include_trap)
+        return self._to_sinks(self._core.render_endpoints(), include_virtual)
 
     @staticmethod
     def _find_trap(endpoints) -> "str | None":
@@ -381,22 +470,44 @@ class WindowsBackend:
     def _sink_for_in(cls, endpoints, endpoint_id: str) -> "SinkInfo | None":
         if not endpoint_id:
             return None
-        for s in cls._to_sinks(endpoints, include_trap=True):
+        for s in cls._to_sinks(endpoints, include_virtual=True):
             if s.name == endpoint_id:
                 return s
         return None
 
     @classmethod
+    def _hardware_id_in(cls, endpoints, endpoint_id) -> "str | None":
+        """endpoint_id back, but only if it is present and not virtual.
+
+        The one question worth asking of any endpoint id we are about to
+        make the default: can sound come out of it. Returns None rather
+        than the id for "no", so callers can treat a cable and a device
+        that has been unplugged as the same thing, which they are.
+        """
+        if not endpoint_id:
+            return None
+        return next((s.name for s in cls._to_sinks(endpoints)
+                     if s.name == endpoint_id), None)
+
+    @classmethod
     def _pick_real_in(cls, endpoints, preferred_name, fallback):
         """The endpoint to play to: the user's choice if it is still here,
-        else the caller's fallback, else anything that is not the trap."""
+        else the caller's fallback, else any hardware output.
+
+        Every branch is filtered through _to_sinks(), so none of them can
+        return a virtual endpoint -- including the fallback, which enable()
+        builds with _sink_for_in() and therefore does NOT pre-filter. If the
+        endpoint that held the default was itself a cable, playing to it is
+        how the processed audio disappears.
+        """
+        real = cls._to_sinks(endpoints)
         if preferred_name:
-            for s in cls._to_sinks(endpoints):
+            for s in real:
                 if s.name == preferred_name:
                     return s
-        if fallback is not None:
+        if fallback is not None and any(s.name == fallback.name for s in real):
             return fallback
-        return next(iter(cls._to_sinks(endpoints)), None)
+        return next(iter(real), None)
 
     # -- crash recovery ----------------------------------------------------
     @staticmethod
@@ -423,39 +534,81 @@ class WindowsBackend:
             previous = None
         finally:
             ROUTING_STATE.unlink(missing_ok=True)
-        if not previous:
-            return
+        # No early return on a missing previous: the state file existing at
+        # all is the evidence we died mid-session, and the rescue below does
+        # not need to know which device we took the default from.
         core = core if core is not None else CoreAudio()
         endpoints = core.render_endpoints()
-        trap = WindowsBackend._find_trap(endpoints)
         current = core.default_render_endpoint()
-        # Only intervene while the trap is still holding the default. If the
-        # user has picked something themselves since the crash, that is a
-        # newer decision than anything in our state file.
-        if trap and current == trap and any(eid == previous
-                                            for eid, _ in endpoints):
+        # Only intervene while a virtual endpoint is still holding the
+        # default. If the user has picked something themselves since the
+        # crash, that is a newer decision than anything in our state file.
+        #
+        # Any virtual endpoint, not just the trap: a build before this one
+        # could hand the default to "CABLE In 16ch" on the way out (see
+        # VIRTUAL_RENDER_NAMES), and a machine left that way is exactly the
+        # one that needs rescuing. previous is filtered the same way, since
+        # an old state file can be carrying one of those too.
+        held_by_cable = _matches(dict(endpoints).get(current, ""),
+                                 VIRTUAL_RENDER_NAMES)
+        previous = WindowsBackend._hardware_id_in(endpoints, previous)
+        if not held_by_cable:
+            return
+        if not previous:
+            # We know we died mid-session (there was a state file), and a
+            # cable still holds the default, so doing nothing leaves the
+            # machine mute. Any hardware output beats that.
+            first = next(iter(WindowsBackend._to_sinks(endpoints)), None)
+            previous = first.name if first is not None else None
+        if previous:
             core.set_default_render_endpoint(previous)
 
     # -- lifecycle ---------------------------------------------------------
     def enable(self) -> "SinkInfo | None":
         """Make the cable the default endpoint. Returns the real output
         endpoint the engine should render to (None if there is no hardware
-        output available -- caller should wait and retry)."""
+        output available -- caller should wait and retry).
+
+        On None, last_enable_error says which of the three ways this failed.
+        They are not the same problem and the caller cannot tell them apart
+        from the return value: the first on-hardware run of this backend
+        reported "no hardware audio sink found" when the truth was that COM
+        was not initialised on the calling thread, so nothing was enumerated
+        at all (see _ensure_com).
+        """
+        self.last_enable_error = None
         self.recover_stale(self._core)
         endpoints = self._core.render_endpoints()
+        if not endpoints:
+            self.last_enable_error = (
+                "Windows reported no audio output devices at all -- not even "
+                "the virtual cable that was found a moment ago. This is a "
+                "fault in the app, not in your sound setup.")
+            return None
         trap_id = self._find_trap(endpoints)
         if trap_id is None:
-            return None             # no cable: unsupported_reason() explains
+            self.last_enable_error = (
+                "The virtual audio cable is no longer installed. Reinstall "
+                "VB-CABLE and reboot.")
+            return None
         trap = self._sink_for_in(endpoints, trap_id)
 
-        previous = self._core.default_render_endpoint()
-        if previous == trap_id:
-            previous = None         # a stale trap default is not worth restoring
+        # Only a hardware endpoint is worth restoring. A virtual one would be
+        # written to ROUTING_STATE and then faithfully handed back by
+        # disable() or recover_stale() -- a silent machine, recorded as a
+        # successful restore. The trap is just the commonest case of that,
+        # not a special one.
+        previous = self._hardware_id_in(
+            endpoints, self._core.default_render_endpoint())
         real = self._pick_real_in(
             endpoints, self.preferred_name,
             self._sink_for_in(endpoints, previous))
         if real is None:
-            return None             # cable installed but nothing to play to
+            self.last_enable_error = (
+                "The virtual cable is installed, but Windows lists no other "
+                "output device to play the filtered audio to. Enable your "
+                "speakers or headphones in Sound settings and try again.")
+            return None
 
         # Persisted *before* the swap, so a crash between the two leaves
         # recover_stale() something to work from.
@@ -466,6 +619,9 @@ class WindowsBackend:
             pass        # arming recovery is a convenience, not a precondition
         if not self._core.set_default_render_endpoint(trap_id):
             ROUTING_STATE.unlink(missing_ok=True)
+            self.last_enable_error = (
+                "Windows refused to make the virtual cable the default "
+                "playback device. Nothing has been changed.")
             return None
         self.trap = trap
         self.real = real
@@ -486,8 +642,13 @@ class WindowsBackend:
         found the sound settings themselves.
         """
         endpoints = self._core.render_endpoints()
-        target = self.real.name if self.real is not None else None
-        if target is None or not any(eid == target for eid, _ in endpoints):
+        # Every candidate goes through _hardware_id_in, so none of them can
+        # be a cable. Handing the default to a virtual endpoint is how
+        # "turn it off" used to end in silence: it looks like a restore,
+        # reports like a restore, and plays nothing.
+        target = self._hardware_id_in(
+            endpoints, self.real.name if self.real is not None else None)
+        if target is None:
             # Whatever we recorded before the swap, if it is still here.
             previous = None
             try:
@@ -496,12 +657,12 @@ class WindowsBackend:
                         ROUTING_STATE.read_text()).get("previous_default")
             except Exception:
                 previous = None
-            if previous and any(eid == previous for eid, _ in endpoints):
-                target = previous
-            else:
-                # Anything at all, as long as it is not the cable.
-                fallback = next(iter(self._to_sinks(endpoints)), None)
-                target = fallback.name if fallback is not None else None
+            target = self._hardware_id_in(endpoints, previous)
+        if target is None:
+            # Any hardware output at all. Better a device the user did not
+            # choose than a cable: one is wrong, the other is mute.
+            fallback = next(iter(self._to_sinks(endpoints)), None)
+            target = fallback.name if fallback is not None else None
         if target:
             self._core.set_default_render_endpoint(target)
         self.trap = self.real = None
@@ -762,3 +923,38 @@ def list_sinks() -> list:
     """Module-level form, for callers that ask before a session exists.
     Mirrors backends/pipewire.list_sinks()."""
     return WindowsBackend()._sinks()
+
+
+def trap_render_present(core: "CoreAudio | None" = None) -> "bool | None":
+    """Is a virtual cable's render endpoint actually there, right now?
+
+    Exists so the *installer* can ask the app this question instead of
+    answering it itself. It used to answer it itself, with a different
+    test, and the two disagreed: the installer checked for VB-Audio's
+    registry key under HKLM\\SOFTWARE\\VB-Audio\\Cable, while the app
+    checks for an endpoint named "CABLE Input". VB-CABLE's own Remove
+    Driver leaves that key behind, so a machine whose driver had been
+    removed got "VB-CABLE is already installed, skipping the driver step"
+    from setup and "No virtual audio cable is installed" from the app, in
+    the same sitting. One source of truth, and it is this one, because it
+    is the thing the app will actually try to use.
+
+    None means the question could not be answered -- no pycaw/comtypes, so
+    not even the enumeration is available -- which is not the same as
+    False and must not be treated as "go install a driver".
+
+    The core argument is the test seam, as on recover_stale(). An injected
+    core *is* the enumeration, so the dependency probe is skipped for it --
+    otherwise this could only ever return None off Windows and the one
+    answer worth asserting (that a 16ch endpoint alone is not a usable
+    cable) would be untestable.
+    """
+    if core is None:
+        try:
+            import comtypes     # noqa: F401
+            import pycaw        # noqa: F401
+        except Exception:       # noqa: BLE001
+            return None
+        core = CoreAudio()
+    return any(_matches(name, TRAP_RENDER_NAMES)
+               for _, name in core.render_endpoints())

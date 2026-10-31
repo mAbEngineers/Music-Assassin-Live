@@ -105,3 +105,8 @@ SINK_NAME = _impl.SINK_NAME
 SINK_DESC = _impl.SINK_DESC
 #: Real (non-trap) output devices available right now.
 list_sinks = _impl.list_sinks
+#: Whether a virtual cable's render endpoint exists; None where the question
+#: does not apply or cannot be answered. Dispatched here because the Windows
+#: installer asks the app this (via --check-cable) rather than testing for it
+#: itself -- the two tests disagreed, and the app's is the one that counts.
+trap_render_present = _impl.trap_render_present
