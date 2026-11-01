@@ -7,11 +7,11 @@
   <a href="https://github.com/mAbEngineers/music-assassin-live/releases/latest"><img src="https://img.shields.io/github/v/release/mAbEngineers/music-assassin-live" alt="Latest release"></a>
   <a href="https://github.com/mAbEngineers/music-assassin-live/releases"><img src="https://img.shields.io/github/downloads/mAbEngineers/music-assassin-live/total" alt="Downloads"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/mAbEngineers/music-assassin-live" alt="License: MIT"></a>
-  <a href="#requirements"><img src="https://img.shields.io/badge/platform-Linux%20%7C%20Windows-blue" alt="Platform"></a>
+  <a href="#requirements"><img src="https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS-blue" alt="Platform"></a>
 </p>
 
 <p align="center">
-  <strong>System-wide, realtime music removal for Linux and Windows — works like a volume booster.</strong><br>
+  <strong>System-wide, realtime music removal for Linux, Windows and macOS — works like a volume booster.</strong><br>
   One toggle, and <em>everything</em> the device plays gets background music stripped before it reaches the speaker.
 </p>
 
@@ -36,13 +36,14 @@
 ## Features
 
 - **One toggle, every app** — browser, Spotify, VLC, whatever's playing. No per-app setup, no manual audio routing.
-- **Linux and Windows** — one app, one engine, one model library; only the audio routing differs per OS. Linux uses PipeWire directly (`pw-cli` / `wpctl` / `pw-dump`, no `pactl`). Windows routes through the free VB-CABLE virtual audio device, which setup installs for you.
+- **Best at voice-over** — a person speaking over background music: videos, lectures, streams. Karaoke-grade song stem separation is a different, harder problem; the current realtime models do not claim it. For spoken content over music, `dpdfnet_hr` is the strongest live choice.
+- **Linux, Windows and macOS** — one app, one engine, one model library; only the audio routing differs per OS. Linux uses PipeWire directly (`pw-cli` / `wpctl` / `pw-dump`, no `pactl`). Windows routes through the free VB-CABLE virtual audio device, which setup installs for you. macOS uses native Core Audio process taps — no virtual driver and no default-device swap; the one-time System Audio Recording permission is the only setup step.
 - **Crash-safe** — quitting, crashing, or killing the process hands your original output device back; `--recover` cleans up stale state at startup. On Windows a crash also writes a report you can attach to a bug.
 - **A real model library** — five interchangeable ONNX models behind one processor interface, from a 2 MB speech-enhancer up to a realtime vocal/music separator. See [Model library](#model-library).
 - **Mid/side stereo pre-filter** — an optional, model-independent lever that targets wide (non-centered) content using stereo panning instead of spectral guessing. Stacks with any model.
 - **Benchmarked, not vibes-based** — `bench_quality.py` scores every model/filter/mix combination against ground-truth stems on a dozen+ metrics — suppression, vocal damage, artifacts, latency — so a change shows up as a number moving, not a feeling.
 - **Lightweight** — no torch; the whole Python stack is ≈100 MB.
-- **One installer per platform** — a `.deb` on Ubuntu/Debian, a `.exe` on Windows. Models included, no manual setup.
+- **One installer per platform** — a `.deb` on Ubuntu/Debian, a `.exe` on Windows, and a PyInstaller `.app`/DMG build script for macOS. No public macOS release is published yet. Models included, no manual setup.
 
 ## How it works
 
@@ -69,10 +70,25 @@ apps → "CABLE Input" (default while ON) → CABLE Output (capture)
      → streaming engine → ONNX model → your real speakers
 ```
 
+**On macOS** there is no trap device or cable to insert. A native Core Audio
+process tap captures audio destined for the current output and
+`mutedWhenTapped` silences the original only while the tap is read. A private
+aggregate device carries the tap into PortAudio, and the processed result is
+rendered back to the same output:
+
+```
+apps → process tap (muted while read) → private aggregate
+     → streaming engine → ONNX model → current output device
+```
+
+The system default never changes, so volume keys keep working. If the app
+stops or crashes, the private objects disappear and the original audio
+returns automatically.
+
 The routing layer is the only platform-specific code. `routing.py` picks
-`backends/pipewire.py` or `backends/windows.py`; both satisfy the same
-`RoutingBackend` protocol, so the engine, models and UI never know which OS
-they are on.
+`backends/pipewire.py`, `backends/windows.py` or `backends/macos.py`; all
+satisfy the same `RoutingBackend` protocol, so the engine, models and UI never
+know which OS they are on.
 
 <details>
 <summary><strong>Full pipeline ▸</strong> mono speech-enhancer lane vs. stereo separator lane, FIFOs, optional stages</summary>
@@ -123,8 +139,14 @@ flowchart LR
 - Windows 10 or 11, 64-bit (tested: Windows 10 build 19044)
 - [VB-CABLE](https://vb-audio.com/Cable/) — the installer offers to download and install it for you (checksum-verified, not bundled). A reboot is needed after it installs.
 
-**Running from source (either OS)**
-- Python 3.10+
+**macOS**
+- macOS 14.4 or later on Apple Silicon (arm64). Current ONNX Runtime macOS wheels are arm64-only.
+- Python 3.11+ (3.12 recommended) with Tkinter. A python.org build or `brew install python-tk@3.12` provides Tk.
+- One-time **System Audio Recording** permission. No BlackHole, no driver, no admin install, no reboot.
+- The `.app`/DMG build script is included (`scripts/build_macos.sh`); run from source or build the DMG. See [`docs/MACOS.md`](docs/MACOS.md) and [`packaging/macos/README.md`](packaging/macos/README.md).
+
+**Running from source (any OS)**
+- Python 3.10+ (macOS: 3.11+)
 - `pip install -r requirements.txt` (numpy, sounddevice, soxr, onnxruntime; plus pycaw and comtypes on Windows, installed automatically)
 
 ## Quick start
@@ -133,6 +155,7 @@ flowchart LR
 
 - **Ubuntu / Debian:** `sudo apt install ./music-assassin-live_*_amd64.deb`
 - **Windows:** run `music-assassin-live-setup-*.exe`. Windows will warn about an unknown publisher because the installer is not code-signed yet; choose *More info*, then *Run anyway*. Tick the VB-CABLE option when asked, and reboot afterwards.
+- **macOS:** no official release yet. Build the DMG with `scripts/build_macos.sh` or run from source with the instructions below.
 
 **From source:**
 
@@ -148,6 +171,11 @@ python -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m assassin_live --headless --model stemgen  # try the realtime separator
 .venv/bin/python -m assassin_live --recover                   # cleanup after a crash
 ```
+
+On macOS, allow the **System Audio Recording** prompt on first start. Models,
+settings and logs live under `~/Library/Application Support/music-assassin`
+and `~/Library/Logs/music-assassin`; the volume keys keep working because the
+default output is never changed. See [`docs/MACOS.md`](docs/MACOS.md).
 
 <details>
 <summary>Sanity checks & benchmarking</summary>
@@ -196,6 +224,12 @@ a clean win yet — its leftover music is audible, and its training data
 (MUSDB18-HQ, MoisesDB) carries a non-commercial licence that the maintainer
 has chosen to accept for now (see `models/README.md`). Pick your model with
 `--model <name>` or the GUI picker; full head-to-head numbers are below.
+
+For the primary **voice-over over music** case, `dpdfnet_hr` is the strongest
+live choice: it removes the most background music and keeps narration
+understandable, at the cost of some voice damage. `stemgen` is the gentler
+choice for singing and natural voice; it leaves more music behind. A
+karaoke-grade song separator is not available in the live path.
 
 The **mid/side stereo pre-filter** (`assassin_live/audio/midside.py`, toggle
 in the GUI or `--midside`) is a complementary, non-model lever for the same
@@ -410,6 +444,15 @@ The full record (how the installer works, what the first hardware runs found,
 the signing options and their costs) is in
 [`packaging/windows/README.md`](packaging/windows/README.md).
 
+### macOS
+
+Not packaged yet. The planned build is a PyInstaller `.app` plus a DMG, with
+`NSAudioCaptureUsageDescription` in `Info.plist` and a stable signing
+identity. Ad-hoc signing is not enough for the System Audio Recording TCC
+prompt; a local self-signed certificate works for development, while a public
+release should use Developer ID + notarization. The backend itself is done and
+live-tested: see [`docs/MACOS.md`](docs/MACOS.md).
+
 Mobile packaging is still not possible — see `docs/ARCHITECTURE.md` §6
 (Platform Reality Check).
 
@@ -425,6 +468,9 @@ Mobile packaging is still not possible — see `docs/ARCHITECTURE.md` §6
 - [ ] Tray icon, autostart, first-run model download
 - [x] `.deb` packaging (`scripts/build_deb.sh`) — models bundled, ready to run after install
 - [x] Windows — routing backend, installer, CI; audio verified on real hardware (v0.1.5)
+- [x] macOS — Core Audio tap backend, 44.1/48 kHz, output switching, low-latency
+      path, live headless + GUI, `.app`/DMG packaging. Public release pending.
+      See [`docs/MACOS.md`](docs/MACOS.md)
 - [ ] Windows: a crash after some time in a session is reported but not yet explained (`crash.log`)
 - [ ] Windows: code signing (decided to defer; see `packaging/windows/README.md`)
 - [ ] PyInstaller → AppImage packaging

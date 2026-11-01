@@ -48,11 +48,17 @@ def _say_recovered() -> None:
         enable_dpi_awareness()
         root = tkinter.Tk()
         root.withdraw()
-        messagebox.showinfo(
-            "Music Assassin Live",
-            "Your normal playback device has been restored.\n\n"
-            "If sound is still going to the virtual cable, open Sound "
-            "settings and choose your speakers or headphones there.")
+        if sys.platform.startswith("darwin"):
+            text = (
+                "macOS restores audio automatically when Music Assassin "
+                "Live stops or crashes. There is no system default or virtual "
+                "cable to recover on this platform.")
+        else:
+            text = (
+                "Your normal playback device has been restored.\n\n"
+                "If sound is still going to the virtual cable, open Sound "
+                "settings and choose your speakers or headphones there.")
+        messagebox.showinfo("Music Assassin Live", text)
         root.destroy()
     except Exception:       # noqa: BLE001
         pass    # no display or no tk: the printed line above is the fallback
@@ -69,7 +75,11 @@ def main():
     ap = argparse.ArgumentParser(prog="assassin_live")
     ap.add_argument("--headless", action="store_true",
                     help="no GUI; enable filter until Ctrl-C")
-    ap.add_argument("--model", default="stemgen")
+    # macOS's primary case is speech over background music, where the speech
+    # enhancer is the stronger live choice. Other platforms keep stemgen.
+    ap.add_argument("--model",
+                    default="dpdfnet_hr" if sys.platform == "darwin"
+                    else "stemgen")
     ap.add_argument("--bypass", action="store_true",
                     help="route audio but skip processing (plumbing test)")
     ap.add_argument("--midside", action="store_true",

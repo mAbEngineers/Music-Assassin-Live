@@ -13,6 +13,9 @@ When it disagrees with them, check the dates; this page was written
   published too, as a Linux `.deb`.
 - **`main` and `dev`** are the same commit, and `feat/separator-spike` is gone.
   `stemgen` is the default pipeline.
+- **macOS:** the Core Audio tap backend landed 2026-11-01 and is live-tested on
+  Apple Silicon. A `.app`/DMG build script and test DMG exist; a public release
+  is next. See the macOS section below.
 - **Open:** the Windows crash after a while is reported to `crash.log` but not
   yet explained (see the Windows section below); Windows code signing is
   deferred; the install-or-repair prompt in setup has had one real-machine
@@ -179,6 +182,33 @@ icon cache keys on the icon source — an upgrade that changes the icon
 taskbar, which comes from the running process, updated. Shortcuts now name
 an installed `.ico` instead. Details and the uninstall notes:
 `packaging/windows/README.md`.
+
+## macOS: Core Audio tap backend done (2026-11-01)
+
+The native route is proven and implemented on this Mac (M1 Max, macOS
+27.0.1): a private, device-scoped `CATapDescription` plus a private aggregate
+device, read through `sounddevice`, captures system audio; `mutedWhenTapped`
+silences the original while reading; stopping, quitting or `kill -9` brings it
+back. Default output is never changed, so volume keys keep working and
+`recover_stale()` is a no-op. No BlackHole, no driver, no admin install.
+
+`assassin_live/audio/backends/macos.py` implements the full `RoutingBackend`;
+`tests/test_macos_routing.py` covers the state machine with a fake Core Audio.
+Live checks on 2026-11-01: headless + GUI smoke tests, 44.1 kHz CMF Buds and
+48 kHz built-in, output switching both directions with rebuild, clean Ctrl-C
+restore, `kill -9` fail-open, and TCC prompt with a stable self-signed app.
+Ad-hoc signing was not enough for TCC. PortAudio's default buffering measured
+~140 ms on built-in speakers; `MacOSBackend.stream_latency = "low"` brings it
+to ~63.5 ms (CMF ~83.5 ms), zero xruns. The aggregate inherits the output
+rate; PortAudio requests 48 kHz and Core Audio resamples, so the engine keeps
+its 48 kHz path.
+
+Listening on the speech+music test: `stemgen` keeps the voice but leaves
+audible music; `dpdfnet_hr` removes more music but is choppy and lets music
+return during a continuous sentence. `--midside` did not fix the leak. This is
+the existing model trade-off, not a routing defect. macOS packaging
+(`.app`/DMG) is in the PR; public release/signing is next. Full record:
+`docs/MACOS.md`; live test: `tests/test_macos_live.py`.
 
 ## Packaging, icon and the output menu (2026-10-27/30)
 

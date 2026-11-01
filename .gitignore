@@ -9,6 +9,7 @@ models/*.onnx
 build/
 dist/
 *.spec
+!packaging/macos/*.spec
 
 # VB-Audio's installer, if a maintainer drops one in for an internal bundled
 # build (ROADMAP D4). Never redistribute it through this repository.

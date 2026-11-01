@@ -37,6 +37,7 @@ HARDWARE_FREE=(
   test_volume_mirror        # C2's mirror
   test_platform_guard       # the startup refusal, and the crash it replaces
   test_windows_routing      # D3.3's state machine, with COM faked out
+  test_macos_routing        # Core Audio tap state machine, with Core Audio faked
   test_windows_com_thread   # COM on a worker thread (Windows only; skips here)
   test_crash_report         # a crash leaves a traceback and hands the audio back
   test_icon_assets          # the .ico matches the icon the app draws (needs Pillow)

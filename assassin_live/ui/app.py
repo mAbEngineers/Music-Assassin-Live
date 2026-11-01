@@ -75,8 +75,10 @@ DEVICES_H, SIGNAL_H = 79, 150
 METER_W, METER_H = 316, 100
 FADER_W = 300
 
-UI_FAMILIES = ("Inter", "Cantarell", "Ubuntu", "Noto Sans", "DejaVu Sans")
-MONO_FAMILIES = ("JetBrains Mono", "Fira Mono", "Ubuntu Mono", "DejaVu Sans Mono")
+UI_FAMILIES = ("Inter", "SF Pro Text", "Helvetica Neue", "Cantarell",
+               "Ubuntu", "Noto Sans", "DejaVu Sans")
+MONO_FAMILIES = ("JetBrains Mono", "SF Mono", "Menlo", "Fira Mono",
+                 "Ubuntu Mono", "DejaVu Sans Mono")
 
 
 def _pick_family(preferred: tuple, available: set, fallback: str) -> str:
@@ -152,6 +154,8 @@ class App:
         self.atten_db = saved.get("atten_db", 0.0)
         self.smoothing_ms = saved.get("smoothing_ms", 0.0)
         self._initial_pipeline = saved.get("pipeline", "stemgen")
+        self._mac_permission_notice = saved.get(
+            "macos_permission_notice", False)
 
         # WM_CLASS must equal the .desktop file's StartupWMClass, or the shell
         # cannot match this window to its icon and shows a generic one.
@@ -163,6 +167,14 @@ class App:
         self.root.resizable(False, False)
         self.root.configure(bg=BG)
         self.root.protocol("WM_DELETE_WINDOW", self._quit)
+        if sys.platform == "darwin":
+            # Cmd-Q goes through Tk's macOS Quit command, not through
+            # WM_DELETE_WINDOW. Route it through the same teardown so the tap
+            # and aggregate are destroyed rather than left to process death.
+            try:
+                self.root.createcommand("::tk::mac::Quit", self._quit)
+            except tk.TclError:
+                pass
 
         icon_path = _icon_path()
         if icon_path.is_file():
@@ -231,6 +243,7 @@ class App:
                 "bandlimit_enabled": self.bandlimit_enabled,
                 "atten_db": self.atten_db,
                 "smoothing_ms": self.smoothing_ms,
+                "macos_permission_notice": self._mac_permission_notice,
             }))
         except OSError:
             pass  # best-effort; a failed save shouldn't block quitting
@@ -377,7 +390,12 @@ class App:
         return None
 
     def _pick_default_model(self, names: list[str]) -> str:
-        for candidate in (self._initial_pipeline, "stemgen", "dpdfnet_hr", "gtcrn"):
+        # macOS's primary case is speech over background music, where the
+        # speech enhancer is the stronger live choice. Other platforms keep
+        # stemgen, which preserves singing and the stereo image.
+        default = "dpdfnet_hr" if sys.platform == "darwin" else "stemgen"
+        for candidate in (self._initial_pipeline, default, "stemgen",
+                          "dpdfnet_hr", "gtcrn"):
             if candidate and candidate in names:
                 return candidate
         return names[0]
@@ -812,6 +830,16 @@ class App:
     def _toggle(self):
         if self._busy:
             return          # disabled anyway; belt and braces
+        if (not self.enabled and sys.platform == "darwin"
+                and not self._mac_permission_notice):
+            messagebox.showinfo(
+                "System audio permission",
+                "macOS will ask for System Audio Recording permission.\n\n"
+                "Click Allow. If you already denied it, open System Settings "
+                "→ Privacy & Security → System Audio Recording (or Screen & "
+                "System Audio Recording), enable Music Assassin Live, then "
+                "try again.")
+            self._mac_permission_notice = True
         if self.enabled:
             self._begin_transition("stopping", self._work_off)
         else:

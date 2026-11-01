@@ -1,5 +1,9 @@
 # Deliberately tiny — the app must never depend on torch.
 # Whole stack ≈ 100 MB. See docs/ARCHITECTURE.md §1.
+#
+# macOS: use Python 3.11+ (3.12 recommended) with Tkinter. The current
+# onnxruntime macOS wheel is arm64-only and needs macOS 14+; the Mac routing
+# backend itself needs macOS 14.4+ for Core Audio process taps.
 numpy
 sounddevice
 soxr
