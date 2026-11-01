@@ -43,7 +43,7 @@
 - **Mid/side stereo pre-filter** — an optional, model-independent lever that targets wide (non-centered) content using stereo panning instead of spectral guessing. Stacks with any model.
 - **Benchmarked, not vibes-based** — `bench_quality.py` scores every model/filter/mix combination against ground-truth stems on a dozen+ metrics — suppression, vocal damage, artifacts, latency — so a change shows up as a number moving, not a feeling.
 - **Lightweight** — no torch; the whole Python stack is ≈100 MB.
-- **One installer per platform** — a `.deb` on Ubuntu/Debian, a `.exe` on Windows. macOS runs from source today; `.app`/DMG packaging is next. Models included, no manual setup.
+- **One installer per platform** — a `.deb` on Ubuntu/Debian, a `.exe` on Windows, and a PyInstaller `.app`/DMG build script for macOS. No public macOS release is published yet. Models included, no manual setup.
 
 ## How it works
 
@@ -143,7 +143,7 @@ flowchart LR
 - macOS 14.4 or later on Apple Silicon (arm64). Current ONNX Runtime macOS wheels are arm64-only.
 - Python 3.11+ (3.12 recommended) with Tkinter. A python.org build or `brew install python-tk@3.12` provides Tk.
 - One-time **System Audio Recording** permission. No BlackHole, no driver, no admin install, no reboot.
-- macOS packaging (`.app` / DMG) is the next phase; run from source for now. See [`docs/MACOS.md`](docs/MACOS.md).
+- The `.app`/DMG build script is included (`scripts/build_macos.sh`); run from source or build the DMG. See [`docs/MACOS.md`](docs/MACOS.md) and [`packaging/macos/README.md`](packaging/macos/README.md).
 
 **Running from source (any OS)**
 - Python 3.10+ (macOS: 3.11+)
@@ -155,7 +155,7 @@ flowchart LR
 
 - **Ubuntu / Debian:** `sudo apt install ./music-assassin-live_*_amd64.deb`
 - **Windows:** run `music-assassin-live-setup-*.exe`. Windows will warn about an unknown publisher because the installer is not code-signed yet; choose *More info*, then *Run anyway*. Tick the VB-CABLE option when asked, and reboot afterwards.
-- **macOS:** no packaged release yet. Run from source with the instructions below; the `.app`/DMG build is the next phase.
+- **macOS:** no official release yet. Build the DMG with `scripts/build_macos.sh` or run from source with the instructions below.
 
 **From source:**
 
@@ -469,8 +469,8 @@ Mobile packaging is still not possible — see `docs/ARCHITECTURE.md` §6
 - [x] `.deb` packaging (`scripts/build_deb.sh`) — models bundled, ready to run after install
 - [x] Windows — routing backend, installer, CI; audio verified on real hardware (v0.1.5)
 - [x] macOS — Core Audio tap backend, 44.1/48 kHz, output switching, low-latency
-      path, live headless + GUI; packaging next. See
-      [`docs/MACOS.md`](docs/MACOS.md)
+      path, live headless + GUI, `.app`/DMG packaging. Public release pending.
+      See [`docs/MACOS.md`](docs/MACOS.md)
 - [ ] Windows: a crash after some time in a session is reported but not yet explained (`crash.log`)
 - [ ] Windows: code signing (decided to defer; see `packaging/windows/README.md`)
 - [ ] PyInstaller → AppImage packaging

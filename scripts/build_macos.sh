@@ -32,12 +32,6 @@ DIST_DIR="$ROOT/dist"
 MODEL_SOURCE_DIR="${1:-${MUSIC_ASSASSIN_MODELS:-$HOME/Library/Application Support/music-assassin/models}}"
 SPEC="$ROOT/packaging/macos/$PKG.spec"
 APP="$BUILD_DIR/pyinstaller/dist/$APP_NAME.app"
-DMG="$DIST_DIR/$APP_NAME-$(python3 - <<'PY'
-import pathlib, re
-text = pathlib.Path('assassin_live/__init__.py').read_text()
-print(re.search(r'__version__ = "([^"]+)"', text).group(1))
-PY
-).dmg"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "error: this script builds a macOS app and must run on macOS." >&2
@@ -71,6 +65,14 @@ if ! "$VENV/bin/python" -c "import PyInstaller" >/dev/null 2>&1; then
   "$VENV/bin/pip" install pyinstaller
 fi
 
+VERSION="$("$VENV/bin/python" - <<'PY'
+import pathlib, re
+text = pathlib.Path('assassin_live/__init__.py').read_text()
+print(re.search(r'__version__ = "([^"]+)"', text).group(1))
+PY
+)"
+DMG="$DIST_DIR/$APP_NAME-$VERSION.dmg"
+
 MODEL_FILES=(
   gtcrn_simple.onnx dpdfnet_baseline.onnx dpdfnet2_48khz_hr.onnx
   dtln_model_1.onnx dtln_model_2.onnx stemgen_rt_vocals.onnx
@@ -87,12 +89,6 @@ for f in "${MODEL_FILES[@]}"; do
   fi
 done
 
-VERSION="$("$VENV/bin/python" - <<'PY'
-import pathlib, re
-text = pathlib.Path('assassin_live/__init__.py').read_text()
-print(re.search(r'__version__ = "([^"]+)"', text).group(1))
-PY
-)"
 echo "==> building $APP_NAME $VERSION (arm64)"
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR/icon.iconset" "$DIST_DIR"

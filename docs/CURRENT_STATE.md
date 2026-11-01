@@ -14,8 +14,8 @@ When it disagrees with them, check the dates; this page was written
 - **`main` and `dev`** are the same commit, and `feat/separator-spike` is gone.
   `stemgen` is the default pipeline.
 - **macOS:** the Core Audio tap backend landed 2026-11-01 and is live-tested on
-  Apple Silicon; `.app`/DMG packaging and signing are next. See the macOS
-  section below.
+  Apple Silicon. A `.app`/DMG build script and test DMG exist; a public release
+  is next. See the macOS section below.
 - **Open:** the Windows crash after a while is reported to `crash.log` but not
   yet explained (see the Windows section below); Windows code signing is
   deferred; the install-or-repair prompt in setup has had one real-machine
@@ -207,8 +207,8 @@ Listening on the speech+music test: `stemgen` keeps the voice but leaves
 audible music; `dpdfnet_hr` removes more music but is choppy and lets music
 return during a continuous sentence. `--midside` did not fix the leak. This is
 the existing model trade-off, not a routing defect. macOS packaging
-(`.app`/DMG, signing) is next. Full record: `docs/MACOS.md`; live test:
-`tests/test_macos_live.py`.
+(`.app`/DMG) is in the PR; public release/signing is next. Full record:
+`docs/MACOS.md`; live test: `tests/test_macos_live.py`.
 
 ## Packaging, icon and the output menu (2026-10-27/30)
 
