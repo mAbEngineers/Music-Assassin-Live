@@ -2,9 +2,10 @@
 
 RoutingSession is the platform-agnostic name the rest of the app (ui/app.py,
 __main__.py) imports; the actual routing mechanism lives behind a
-RoutingBackend (backends/base.py). There are two backends: PipeWire on Linux
-(backends/pipewire.py) and a WASAPI virtual-cable backend on Windows
-(backends/windows.py). They share no mechanism at all -- no sinks, no node
+RoutingBackend (backends/base.py). There are three backends: PipeWire on
+Linux (backends/pipewire.py), a WASAPI virtual-cable backend on Windows
+(backends/windows.py), and Core Audio process taps on macOS
+(backends/macos.py). They share no mechanism at all -- no sinks, no node
 graph, no pw-cli -- only the behaviour base.py specifies, so everything
 platform-specific is selected here and nowhere else.
 
@@ -26,8 +27,9 @@ because the Linux dry-run tests and spikes reach for them directly.
 
 import sys
 
-from .backends import pipewire, windows
+from .backends import macos, pipewire, windows
 from .backends.base import RoutingBackend, SinkInfo
+from .backends.macos import MacOSBackend
 from .backends.pipewire import PipeWireBackend
 from .backends.windows import WindowsBackend
 
@@ -48,6 +50,7 @@ from .backends.pipewire import (  # noqa: F401
 _BACKEND_BY_PLATFORM = (
     ("linux", PipeWireBackend, pipewire),
     ("win", WindowsBackend, windows),
+    ("darwin", MacOSBackend, macos),
 )
 
 
@@ -85,9 +88,10 @@ def unsupported_reason() -> str | None:
     if backend is None:
         return (
             "Music Assassin Live does not support this platform yet.\n\n"
-            "It routes audio through PipeWire on Linux and a virtual audio "
-            "cable on Windows. Both are platform-specific, and there is "
-            f"nothing here that would work on {sys.platform}."
+            "It routes audio through PipeWire on Linux, Core Audio process "
+            "taps on macOS, and a virtual audio cable on Windows. All three "
+            "are platform-specific, and there is nothing here that would "
+            f"work on {sys.platform}."
         )
     return backend.unsupported_reason()
 

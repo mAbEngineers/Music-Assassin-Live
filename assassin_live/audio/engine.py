@@ -679,10 +679,19 @@ class AudioEngine:
         self._worker = threading.Thread(target=self._work, daemon=True)
         self._worker.start()
 
-        self._stream = sd.Stream(
+        # A backend may declare the PortAudio latency setting it wants. Only
+        # macOS currently does: Core Audio's default 'high' buffers measured
+        # ~140 ms on built-in speakers, while 'low' measured ~63 ms with zero
+        # xruns. Linux/Windows leave this unset so the existing default stays
+        # exactly as it was.
+        latency = getattr(self._backend, "stream_latency", None)
+        stream_kwargs = dict(
             device=(capture_dev, playback_dev), samplerate=SAMPLE_RATE,
             blocksize=BLOCK, channels=2, dtype="float32",
             callback=self._callback)
+        if latency:
+            stream_kwargs["latency"] = latency
+        self._stream = sd.Stream(**stream_kwargs)
         self._stream.start()
 
         # second targeting pass, once the stream (and its stream nodes)

@@ -88,7 +88,12 @@ def default_dest() -> Path:
     env = os.environ.get("MUSIC_ASSASSIN_MODELS")
     if env:
         return Path(env)
-    base = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
+    if "XDG_DATA_HOME" in os.environ:
+        base = Path(os.environ["XDG_DATA_HOME"])
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    else:
+        base = Path.home() / ".local" / "share"
     return base / "music-assassin" / "models"
 
 

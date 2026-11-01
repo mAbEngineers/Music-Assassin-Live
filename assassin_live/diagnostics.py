@@ -34,9 +34,9 @@ import time
 import traceback
 
 from . import __version__
-from .paths import state_dir
+from .paths import log_dir
 
-CRASH_LOG = state_dir() / "crash.log"
+CRASH_LOG = log_dir() / "crash.log"
 
 # Keep the tail, drop the head, when the file gets big. An app that crashes
 # in a loop would otherwise fill the disk, and it is the most recent crash

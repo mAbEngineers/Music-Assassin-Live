@@ -22,6 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from assassin_live.audio import routing                      # noqa: E402
+from assassin_live.audio.backends import macos               # noqa: E402
 from assassin_live.audio.backends import pipewire            # noqa: E402
 from assassin_live.audio.backends import windows             # noqa: E402
 from assassin_live import paths                              # noqa: E402
@@ -35,25 +36,26 @@ def test_premise():
     print("  premise        -> FileNotFoundError is not a SubprocessError")
 
 
-def test_no_backend_for_unknown_platform():
-    assert routing._backend_for("darwin") is None, "a macOS backend appeared"
+def test_backend_table_covers_the_three_desktop_platforms():
+    assert routing._backend_for("darwin") is macos.MacOSBackend
     assert routing._backend_for("sunos5") is None
     assert routing._backend_for("linux") is pipewire.PipeWireBackend
     assert routing._backend_for("win32") is windows.WindowsBackend
-    print("  platform table -> linux/win32 map, nothing else does")
+    print("  platform table -> linux/win32/darwin map, nothing else does")
 
 
 def test_reason_names_the_platform_when_no_backend():
-    """macOS rather than win32: Windows has a backend now, so asking about
-    it no longer exercises the no-backend path."""
-    real = sys.platform
+    """sunos5 rather than darwin: all three desktop platforms have a backend
+    now, so asking about one of them no longer exercises the no-backend path."""
+    real = routing.sys.platform
     try:
-        routing.sys.platform = "darwin"
+        routing.sys.platform = "sunos5"
         reason = routing.unsupported_reason()
         assert reason, "no reason given on a platform with no backend"
-        assert "darwin" in reason, f"reason does not name the platform: {reason!r}"
+        assert "sunos5" in reason, f"reason does not name the platform: {reason!r}"
         # It has to be actionable, not just a refusal.
-        assert "PipeWire" in reason
+        for name in ("PipeWire", "Core Audio", "virtual audio cable"):
+            assert name in reason, f"reason does not mention {name}: {reason!r}"
         print("  no backend     -> refused, and says why")
     finally:
         routing.sys.platform = real
@@ -84,6 +86,26 @@ def test_windows_backend_refuses_without_its_prerequisites():
         assert sys.platform in reason, \
             f"reason does not name the platform: {reason!r}"
         print("  windows off-win -> refused, and names the platform")
+
+
+def test_macos_backend_refuses_without_its_prerequisites():
+    """The same guard for the third backend. On a Mac it should be usable
+    (or refuse for a version/architecture reason); elsewhere it must refuse
+    by naming the platform rather than touching Core Audio."""
+    reason = macos.MacOSBackend.unsupported_reason()
+    if sys.platform.startswith("darwin"):
+        if reason is None:
+            print("  macOS          -> a supported Mac, backend usable")
+        else:
+            assert ("macOS" in reason or "Apple Silicon" in reason
+                    or "Core Audio" in reason), \
+                f"refused on macOS for an unexpected reason: {reason!r}"
+            print("  macOS          -> refused, and names the requirement")
+    else:
+        assert reason, f"the macOS backend did not refuse on {sys.platform}"
+        assert sys.platform in reason, \
+            f"reason does not name the platform: {reason!r}"
+        print("  macOS off-mac  -> refused, and names the platform")
 
 
 def test_reason_names_every_missing_tool():
@@ -167,9 +189,10 @@ def test_recover_stale_does_not_raise():
 def main():
     print("\nplatform guard")
     test_premise()
-    test_no_backend_for_unknown_platform()
+    test_backend_table_covers_the_three_desktop_platforms()
     test_reason_names_the_platform_when_no_backend()
     test_windows_backend_refuses_without_its_prerequisites()
+    test_macos_backend_refuses_without_its_prerequisites()
     test_frozen_build_finds_models_beside_the_exe()
     test_reason_names_every_missing_tool()
     test_pw_dump_survives_a_missing_binary()

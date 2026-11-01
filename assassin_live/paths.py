@@ -1,4 +1,10 @@
-"""XDG-style paths: models in data dir, crash-recovery state in state dir."""
+"""Platform data paths: models, settings, state and crash logs.
+
+Linux and Windows keep the existing XDG-style layout. macOS uses the
+platform's own conventions instead: Application Support for data/config/state
+and Logs for the crash file. Explicit XDG_* environment variables still win,
+so a developer or CI job can redirect everything without special cases.
+"""
 
 import os
 import sys
@@ -22,23 +28,49 @@ def bundled_models_dir() -> "Path | None":
     directory, so the repo-relative fallback below resolves to _MEIPASS and
     never sees them. sys.executable is the installed .exe itself.
 
+    A macOS .app puts them in Contents/Resources/models. The executable lives
+    in Contents/MacOS, so the resource path is two parents up. The directory
+    is checked before being returned: tests and a non-bundled frozen build
+    still expect the Windows {app}/models fallback.
+
     The .deb does not need this -- it installs to SYSTEM_MODELS_DIR, which is
     an absolute path -- which is exactly why the gap went unnoticed: every
     packaged build so far has been a .deb.
     """
     if not getattr(sys, "frozen", False):
         return None
-    return Path(sys.executable).resolve().parent / "models"
+    exe = Path(sys.executable).resolve()
+    if sys.platform == "darwin":
+        resources = exe.parent.parent / "Resources" / "models"
+        if resources.is_dir():
+            return resources
+    return exe.parent / "models"
+
+
+def _home_base(env_name: str, mac_default: Path, other_default: Path) -> Path:
+    """An explicit XDG override, else the platform's conventional base."""
+    if env_name in os.environ:
+        return Path(os.environ[env_name])
+    if sys.platform == "darwin":
+        return mac_default
+    return other_default
 
 
 def data_dir() -> Path:
-    base = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
+    base = _home_base("XDG_DATA_HOME",
+                      Path.home() / "Library" / "Application Support",
+                      Path.home() / ".local" / "share")
     return base / APP
 
 
 def state_dir() -> Path:
-    base = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state"))
-    d = base / APP
+    base = _home_base("XDG_STATE_HOME",
+                      Path.home() / "Library" / "Application Support",
+                      Path.home() / ".local" / "state")
+    if sys.platform == "darwin" and "XDG_STATE_HOME" not in os.environ:
+        d = base / APP / "state"
+    else:
+        d = base / APP
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -67,8 +99,20 @@ def models_dir() -> Path:
 
 
 def config_dir() -> Path:
-    base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    base = _home_base("XDG_CONFIG_HOME",
+                      Path.home() / "Library" / "Application Support",
+                      Path.home() / ".config")
     d = base / APP
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def log_dir() -> Path:
+    """Where crash reports go. macOS keeps logs with logs, not with state."""
+    if sys.platform == "darwin" and "XDG_STATE_HOME" not in os.environ:
+        d = Path.home() / "Library" / "Logs" / APP
+    else:
+        d = state_dir()
     d.mkdir(parents=True, exist_ok=True)
     return d
 
