@@ -2,11 +2,49 @@
 
 > **New here? Start with `docs/CURRENT_STATE.md`** — one page on what is true now; this file is the full record.
 
-Updated 2026-10-31 (stemgen made the default, branch `feat/stemgen-default`). **This file is the running record**, newest sections
+Updated 2026-11-09 (StemgenRT runtime findings from the mobile port — docs only, no code change). Previously 2026-10-31 (stemgen made the default, branch `feat/stemgen-default`). **This file is the running record**, newest sections
 first; it was once short and is no longer. It covers where things stand
 *right now* and what to do next. The plan, the reasoning, the
 measured findings and the list of dead ends all live in
 [`docs/ROADMAP.md`](docs/ROADMAP.md) — read that before re-deriving anything.
+
+## StemgenRT runtime findings from the mobile port — 2026-11-09, NOTHING COMMITTED HERE
+
+The `music-assassin-mobile` StemgenRT port investigated the **same ONNX graph
+this repo ships** and turned up three things that touch desktop. Full writeup:
+[`docs/STEMGEN_RUNTIME_HANDOVER.md`](docs/STEMGEN_RUNTIME_HANDOVER.md). No code
+in this repo was changed.
+
+1. **Provenance: a scare, retracted.** Upstream has withdrawn the **v0.6.x**
+   weights "pending provenance and rights review". **This repo ships v0.7.0 and
+   is not affected** — confirmed three ways (model-card sha matches 0.7.0
+   `independent.onnx`; the extracted state shapes match the 0.7.0 Vocals
+   column; upstream's structural cell hash, pinned to their current graph,
+   matches all four of our cells). The existing MUSDB18-HQ / MoisesDB
+   non-commercial caveat in `models/stemgen_rt_vocals.json` is unchanged and is
+   still the real question. **Re-check before a release** — the review is live.
+2. **A free, upstream-blessed graph optimisation this repo does not use.**
+   Their `optimize_independent_model.py` fuses the unrolled recurrences into
+   native ONNX `GRU` ops and specialises layouts: **768 → 344 nodes, exact to
+   101.55 dB over 1000 recurrent steps.** Needs a two-line change to run on a
+   vocals-only extraction. It bought **zero speed on ARM** (measured) and is
+   **untested on x86** — so adopt it for tidiness or a future low-power target,
+   not as a performance fix. Possible `scripts/fetch_stemgen.py --fused`.
+3. **Do not ship int8 stemgen.** Seven variants, including upstream's own
+   recipe, all drift under recurrent feedback (down to −10.6 dB after 1000
+   hops). Upstream has not validated theirs either
+   (`quality_measured=false`). **The one-hop trap:** single-invocation SNR
+   looks fine (~55 dB) because it is the recurrent *state* outputs that poison
+   the next hop — any numerical check on this model must run hundreds of hops
+   with state fed back.
+
+Side benefit: upstream's cell-signature gate matching confirms
+`scripts/fetch_stemgen.py`'s extraction preserves the cell arithmetic exactly.
+
+Not urgent. Desktop measures rtf 0.094 with ~10× headroom; it was mobile that
+failed (rtf 1.25 against a 2.902 ms hop budget), and the reason — cost tracks
+weight bytes, not node count, over a large fixed floor — is in §5 there.
+
 
 ## Where the code is
 
@@ -863,7 +901,9 @@ while destroying the top octave of every voice.
 `assassin_live/audio/stereo.py` rebuilds the image by recovering the chain's
 implied spectral mask from the audio (`|Wet| / |Dry_mono|` per bin) and
 applying that one mask to both original channels. No processor changes, so all
-four models get it at once. Full B3 sweep, whole corpus, 104 item-ratio pairs:
+four models get it at once. Full B3 sweep, whole corpus, 104 item-ratio pairs
+(the earlier, smaller corpus; the README now reports the 234-pair re-run of
+2026-11-17, in which `dpdfnet_hr` scores +6.13 dSI-SDR):
 
 | config | music_supp | vocal_ret | dSI-SDR | stereo_width |
 |---|---|---|---|---|

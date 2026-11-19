@@ -7,12 +7,12 @@
   <a href="https://github.com/mAbEngineers/music-assassin-live/releases/latest"><img src="https://img.shields.io/github/v/release/mAbEngineers/music-assassin-live" alt="Latest release"></a>
   <a href="https://github.com/mAbEngineers/music-assassin-live/releases"><img src="https://img.shields.io/github/downloads/mAbEngineers/music-assassin-live/total" alt="Downloads"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/mAbEngineers/music-assassin-live" alt="License: MIT"></a>
-  <a href="#requirements"><img src="https://img.shields.io/badge/platform-Linux%20%28PipeWire%29-blue" alt="Platform"></a>
+  <a href="#requirements"><img src="https://img.shields.io/badge/platform-Linux%20%7C%20Windows-blue" alt="Platform"></a>
 </p>
 
 <p align="center">
-  <strong>System-wide, realtime music removal for Linux — works like a volume booster.</strong><br>
-  One toggle, and <em>everything</em> the device plays gets background music stripped before it reaches the speaker.
+  <strong>Remove background music from any audio your computer plays, live, offline, on CPU only.</strong><br>
+  A system-wide realtime background-music remover for Linux and Windows. One toggle, and <em>everything</em> the device plays (browser, YouTube, VLC, Spotify) gets background music stripped before it reaches the speaker, keeping the speech.
 </p>
 
 <p align="center">
@@ -27,9 +27,33 @@
 > — this repo, **Music Assassin Live**, is the shippable app built on top of
 > it: routing, streaming engine, UI, packaging.
 
+## What is this?
+
+Music Assassin Live is a free, open-source (MIT) **realtime background music
+remover**. It sits between your apps and your speakers, so you do not process
+files or upload anything: videos, streams, podcasts, calls and games play
+normally, minus the background music. It runs **fully offline**, needs **no
+GPU** (ONNX Runtime on the CPU, with OpenVINO acceleration when available),
+and has no account, subscription or cloud service.
+
+Use it to remove background music from YouTube, streams, lectures,
+documentaries and other speech-first content so dialogue is easier to hear,
+or to cut distracting music for focus, accessibility, or listening-fatigue
+reasons.
+
+| You want | Use |
+|---|---|
+| Remove music from whatever is playing right now, system-wide | **Music Assassin Live** (this repo) |
+| Remove music from a long video file in one batch | [Music-Assassin](https://github.com/mAbEngineers/Music-Assassin) (sibling repo) |
+
+**Install:** grab the Windows `.exe` or Ubuntu/Debian `.deb` from the
+[latest release](https://github.com/mAbEngineers/music-assassin-live/releases/latest).
+See [Packaging](#packaging) for the Windows (VB-CABLE) and Linux
+(`libportaudio2`) notes.
+
 ## Contents
 
-[Features](#features) · [How it works](#how-it-works) · [Quick start](#quick-start) ·
+[What is this?](#what-is-this) · [Features](#features) · [How it works](#how-it-works) · [Quick start](#quick-start) ·
 [Model library](#model-library) · [Measuring quality](#measuring-quality) ·
 [Packaging](#packaging) · [Status](#status) · [Acknowledgments](#acknowledgments)
 
@@ -152,7 +176,7 @@ See [Measuring quality](#measuring-quality) for what each reported number means.
 | **`stemgen`** — default | realtime source separation | 44.1 kHz | ~6 ms | 0.09 | First true vocal/music separator in the lineup — keeps voice & stereo image intact; leaves more music audible than `dpdfnet_hr` |
 | `dtln` | speech enhancement | 16 kHz | 24 ms | 0.07 | Gentlest on vocals of the enhancers, and the lightest |
 | `gtcrn` | speech enhancement | 16 kHz | 16 ms | 0.09 | Smallest (2 MB) and fastest; deletes everything above 8 kHz |
-| `dpdfnet` | speech enhancement | 16 kHz | 50 ms | 0.15 | 16 kHz baseline; benchmarks show it's actively harmful — not recommended |
+| `dpdfnet` | speech enhancement | 16 kHz | 50 ms | 0.15 | 16 kHz baseline; barely beats doing nothing (+0.20 dSI-SDR) and has the worst artifacts — not recommended |
 | `speechdenoiser` | speech enhancement | 48 kHz | — | — | Keeps spoken dialogue clear; upstream licence unresolved, so it's excluded from `.deb` builds |
 
 Four of the five are **speech-enhancement** models: they classify audio by
@@ -242,48 +266,64 @@ Three come with a catch:
 
 ### How the shipped models score
 
-Whole corpus, 104 song/ratio pairs, references built with htdemucs. `music`
-and `vocal` in dB; latency is what you hear, not what the model claims.
+All five bundled models, whole corpus: 117 clips at two music levels, 234
+song/ratio pairs, references built with htdemucs. `music` and `vocal` are in
+dB; latency is what you hear, not what the model claims. `RTF` and latency
+come from the same desktop (Ryzen 9 9950X3D), measured one model at a time.
 
-| model | music removed | vocal kept | dSI-SDR | SAR | musNoise | lat | RTF |
-|---|---|---|---|---|---|---|---|
-| **`dpdfnet_hr`** | **−46.1** | −5.0 | **+4.19** | **4.40** | **1.02** | 50 ms | 0.32 |
-| `dtln` | −20.6 | **−0.9** | +3.59 | 4.24 | 3.11 | 24 ms | **0.07** |
-| `gtcrn` | −28.1 | −2.3 | +2.64 | 3.59 | −20.0 | **16 ms** | 0.09 |
-| `dpdfnet` (16 kHz baseline) | −52.9 | −3.1 | **−0.28** | 0.27 | 7.15 | 50 ms | 0.15 |
-| *do nothing* | 0.0 | — | 0.0 | 76.4 | 0.0 | 0 ms | — |
-| *offline separator* | −42.5 | — | +24.3 | 22.9 | 25.1 | — | — |
-| *theoretical best* | −55.0 | — | +18.1 | 16.9 | −3.0 | — | — |
+| model | music removed | vocal kept | dSI-SDR | SIR | SAR | musNoise | lat | RTF |
+|---|---|---|---|---|---|---|---|---|
+| **`stemgen`** (default) | −22.2 | **−0.05** | **+7.89** | 16.0 | **9.63** | −8.05 | **5.8 ms** | 0.09 |
+| `dpdfnet_hr` | **−41.1** | −3.0 | +6.13 | **26.6** | 6.42 | −2.65 | 50 ms | 0.32 |
+| `dtln` | −21.1 | −0.9 | +4.29 | 18.4 | 5.03 | −0.90 | 24 ms | **0.07** |
+| `gtcrn` | −26.8 | −2.3 | +3.34 | 11.5 | 5.05 | −14.5 | 16 ms | 0.09 |
+| `dpdfnet` (16 kHz baseline) | −49.1 | −2.2 | +0.20 | 24.4 | 1.11 | +5.00 | 50 ms | 0.15 |
+| *do nothing* | 0.0 | n/a | 0.0 | −1.6 | 63.1 | 0.0 | 0 ms | n/a |
+| *offline separator (ceiling)* | −33.6 | n/a | +19.1 | 31.4 | 19.2 | n/a | n/a | n/a |
+| *ideal mask (oracle)* | −48.4 | n/a | +16.5 | 27.3 | 15.7 | n/a | n/a | n/a |
 
-Read across rather than down. `dpdfnet_hr` wins overall on these numbers,
-but it's also the *most* damaging to the voice of the four, and its win
-comes from removing so much music that the scoring forgives that. `dtln`
-barely touches the voice at all (−0.9 dB) and runs ~4.5× lighter, but leaves
-more than 25 dB more music behind. `dpdfnet` (the 16 kHz baseline) is
-actively harmful — a negative dSI-SDR means worse than not processing at
-all — despite the deepest raw suppression number of the four.
+Read across rather than down. `stemgen` is the only model that leaves the
+voice alone (−0.05 dB) and the only one that keeps the stereo image, and it
+posts the best dSI-SDR and artifact score. What it gives up is music: it
+leaves about −22 dB behind, against `dpdfnet_hr`'s −41 dB. `dpdfnet_hr`
+removes the most music of the usable models but pays for it in voice damage
+and artifacts. `dtln` is the lightest and gentlest of the enhancers but
+leaves as much music as `stemgen` while damaging more of the voice. `dpdfnet`
+(the 16 kHz baseline) barely beats doing nothing (+0.20 dSI-SDR) despite the
+deepest raw suppression, and is not recommended.
 
 Where the voice damage lands, same run:
 
 | model | sub | low | mid | high | air |
 |---|---|---|---|---|---|
-| `dpdfnet_hr` | −4.8 | −4.4 | −7.0 | −8.6 | −9.1 |
-| `dtln` | −1.1 | −0.6 | −1.1 | −1.5 | −59.7 |
-| `gtcrn` | −1.8 | −1.8 | −3.0 | −2.9 | −63.4 |
-| `dpdfnet` | −2.3 | −2.6 | −4.5 | −3.8 | −70.4 |
+| `stemgen` | −0.2 | 0.0 | 0.0 | 0.0 | 0.0 |
+| `dpdfnet_hr` | −3.5 | −2.7 | −4.0 | −5.6 | −6.1 |
+| `dtln` | −1.5 | −0.7 | −1.1 | −1.5 | −56.4 |
+| `gtcrn` | −2.3 | −2.1 | −2.7 | −2.5 | −59.5 |
+| `dpdfnet` | −2.2 | −1.9 | −2.9 | −2.7 | −63.6 |
 
 The air column is the giveaway: the three 16 kHz models delete everything
 above 8 kHz *by construction*, trading breath and presence for lighter CPU
 cost. `dpdfnet_hr` keeps the top octave but damages the voice steadily more
-the higher you go. `speechdenoiser` is not in this comparison; it has only
-ever been judged by ear.
+the higher you go. `stemgen` leaves every band essentially untouched.
+`speechdenoiser` is not in this comparison; it has only ever been judged by
+ear.
 
-**`stemgen`, on a separate 234-pair corpus:** +7.9 dB dSI-SDR with no
-measurable vocal damage and the stereo image intact, against `dpdfnet_hr`'s
-+6.1 dB with vocal-loss on 46 clips and a collapsed image — but `stemgen`
-leaves roughly −22 dB of music behind versus `dpdfnet_hr`'s −41 dB. Neither
-wins outright: `stemgen` keeps the voice and the image, `dpdfnet_hr` removes
-more music. That trade-off is a listening call, not a settled score.
+Which model wins also depends on the material (dSI-SDR in dB, higher is
+better; shipped `stemgen`):
+
+| material | `stemgen` | `dpdfnet_hr` | `dtln` |
+|---|---|---|---|
+| male-lead songs (16 pairs) | **9.94** | 0.33 | 1.07 |
+| anime openings (60 pairs) | **11.28** | 4.10 | 3.77 |
+| nasheed (130 pairs) | 5.69 | **7.68** | 4.86 |
+
+On nasheed, `dpdfnet_hr` wins and removes about twice as much music, so
+`--model dpdfnet_hr` is worth trying for that kind of content. Full
+measurements, including larger-hop and int8 variants of `stemgen`, are in
+`docs/STEMGEN_HOP_RESULTS.md`. Neither model wins outright: the trade-off
+between a clean voice and less leftover music is a listening call, not a
+settled score.
 
 ### Named failures, counted per song
 
@@ -304,20 +344,30 @@ tags are counted rather than averaged.
 | `boundary-sensitive` | unusually sensitive to where block edges fall | −12 dB (compare peers, not zero) |
 | `latency` / `cpu-risk` | beyond lip-sync tolerance / little realtime headroom | 120 ms / 0.8 RTF |
 
-How often each fired on the run above:
+How often each fired, out of 234 pairs (the most telling tags; the full
+list is in the benchmark report):
 
-| model | fires most often |
-|---|---|
-| `dpdfnet_hr` | clicks 57, long-burst 49, pumping 38, artifacts 38, **vocal-loss 36**, hf-loss-4k 30, hf-loss 28, musical-noise 26 |
-| `dtln` | **hf-loss 104**, boundary-sensitive 44, artifacts 41, pumping 39, musical-noise 26, long-burst 19, vocal-loss 2 |
-| `gtcrn` | **hf-loss 104**, pumping 49, artifacts 47, vocal-loss 18, long-burst 13, musical-noise 2 |
-| `dpdfnet` | **hf-loss 104**, **clicks 79**, artifacts 73, musical-noise 40, pumping 28, vocal-loss 22 |
+| tag | `stemgen` | `dpdfnet_hr` | `dtln` | `gtcrn` | `dpdfnet` |
+|---|---|---|---|---|---|
+| `vocal-loss` | **0** | 46 | 6 | 42 | 36 |
+| `hf-loss` | **0** | 38 | 234 | 234 | 234 |
+| `artifacts` | **15** | 56 | 80 | 72 | 139 |
+| `music-leak` | 26 | 3 | 11 | 7 | 2 |
+| `leak-burst` | 69 | 13 | 35 | 7 | 4 |
+| `long-burst` | 64 | 73 | 26 | 25 | 45 |
+| `pumping` | 93 | 105 | 80 | 116 | 69 |
+| `musical-noise` | 45 | 49 | 52 | 28 | 70 |
+| `boundary-sensitive` | 61 | 9 | 92 | 24 | 32 |
+| `stereo-collapse` | **4** | 234 | 234 | 234 | 234 |
 
-`stereo-collapse` fires 104/104 on all four and isn't a model fault — the
-chain emits mono unless the stereo rebuild is on. Note how the tag counts
-and averages disagree: `dpdfnet_hr` posts the best musNoise average (1.02)
-while still tripping the musical-noise tag on a quarter of the songs. That's
-the reason both are reported.
+The tags tell `stemgen`'s story: no vocal-loss, no high-frequency loss,
+almost no artifacts, but the most leaks (`leak-burst` 69 and `music-leak`
+26). `stereo-collapse` fires on every pair for the four enhancers because they
+are mono-only and the stereo rebuild was off in this run (the default); it
+would improve with the rebuild on. `stemgen` processes both channels itself
+and keeps the image. Note how tag counts and averages can disagree: `gtcrn` posts the best
+musNoise average (−14.5) while still tripping `pumping` on half the pairs.
+That's the reason both are reported.
 
 ### Trusting the numbers
 
@@ -359,14 +409,19 @@ step. `speechdenoiser` is excluded (its upstream licence is unresolved, see
 `models/README.md`); add it yourself in
 `~/.local/share/music-assassin/models/` if you want it.
 
-Windows builds exist (`scripts/build_windows.bat`, compiled on every push
-by `.github/workflows/windows-build.yml`) and the Windows routing backend is
-written (`assassin_live/audio/backends/windows.py`): it traps through a
-virtual audio cable such as VB-CABLE, which the user installs. What has
-**not** happened is an end-to-end run on real Windows hardware — CI runners
-have no audio endpoints, so no machine has yet played audio through it.
-Treat Windows as untested rather than finished. Mobile packaging is still
-not possible — see `docs/ARCHITECTURE.md` §6 (Platform Reality Check).
+**Windows.** Releases ship an unsigned installer
+(`music-assassin-live-setup-<version>.exe`); SmartScreen will show
+"Windows protected your PC" because there is no code-signing certificate yet.
+Routing uses the free VB-CABLE virtual audio device. Setup offers to download
+and install it (checksum-verified, not bundled), and Windows needs a reboot
+afterwards. Known open issue: some sessions crash after a while; the app
+restores your speakers on every exit and writes a report to
+`%USERPROFILE%\.local\state\music-assassin\crash.log`. Build scripts:
+`scripts/build_windows.bat`, `.github/workflows/windows-build.yml`; backend:
+`assassin_live/audio/backends/windows.py`.
+
+Mobile packaging is still not possible; see `docs/ARCHITECTURE.md` §6
+(Platform Reality Check).
 
 ## Status
 
@@ -384,6 +439,23 @@ not possible — see `docs/ARCHITECTURE.md` §6 (Platform Reality Check).
 
 Models arrive as ONNX release assets — see `docs/ARCHITECTURE.md` §3 for the
 contract between this repo and the research repo.
+
+## FAQ
+
+**Does it work offline, without a GPU?** Yes. Everything runs locally on the
+CPU; nothing is uploaded.
+
+**How is this different from Ultimate Vocal Remover, Demucs or Spleeter?**
+Those separate stems from files after the fact. Music Assassin Live works
+on live playback, system-wide, in 20 ms blocks.
+
+**How is this different from noise suppression (RNNoise, DeepFilterNet, Krisp)?**
+Those target noise. This targets background music under speech, using
+speech-enhancement and music-separation models (see
+[Model library](#model-library)).
+
+**Does it remove music from a video file?** Use the sibling repo,
+[Music-Assassin](https://github.com/mAbEngineers/Music-Assassin).
 
 ## Acknowledgments
 
