@@ -62,7 +62,7 @@ assets (or HuggingFace) with their model card; the app downloads on first run to
 │  · click-free enable/bypass crossfade                         │
 ├─ Layer 1: Interception / routing (per-OS) ────────────────────┤
 │  Linux: PipeWire null-sink + default-sink swap                │
-│  Windows (later): Equalizer APO / native APO — see §6         │
+│  Windows: VB-CABLE as default endpoint (IPolicyConfig) — §6   │
 └───────────────────────────────────────────────────────────────┘
 ```
 
@@ -188,7 +188,7 @@ still fits.
 |---|---|---|
 | Linux | PipeWire trap-sink (above) | **Validated here; Phase 1** |
 | Linux native | LADSPA/filter-chain plugin, C++/Rust + onnxruntime C API | Phase 3. Proven pattern: DeepFilterNet ships an official `deep-filter-ladspa` running realtime on CPU under PipeWire — same architecture, open source, use as reference. Also becomes loadable in EasyEffects for free. |
-| Windows | ⚠️ VB-Cable (the usual advice, incl. our build guide) is **closed-source freeware** — conflicts with the project's open-source-only rule. Open-source route: Equalizer APO (GPL) hosting our effect, or a native APO — both need the Phase-3 C++ port first. | Phase 4, after native port |
+| Windows | **Shipped in v0.1.5 via VB-CABLE.** Windows cannot insert a filter into the audio path, so a virtual cable is made the system default (via the undocumented `IPolicyConfig`), its capture side is read, and the processed audio is played to the real device. VB-CABLE is closed-source freeware, so it is never bundled: setup downloads it at install time against a pinned SHA-256. The open-source alternative, Equalizer APO (GPL) or a native APO, still needs the Phase-3 C++ port. See `packaging/windows/README.md` and `assassin_live/audio/backends/windows.py`. | **Done** (VB-CABLE); APO is Phase 4 |
 | Android | "Volume booster" apps attach *built-in* effects (LoudnessEnhancer) to global audio session 0; **custom** effects on the output mix require vendor/ROM integration or root. No consumer path for system-wide filtering — in-app player only (build guide §10–11). | Not planned |
 | iOS | System audio capture impossible. | Not planned |
 
@@ -271,7 +271,7 @@ leakage figures and the mixing design are in `docs/LIVE_SFX_HANDOVER.md`.
 - Port Layer 2+3 to a LADSPA/PipeWire filter-chain plugin (Rust or C++,
   onnxruntime C API), following the deep-filter-ladspa pattern. Python app shrinks
   to UI + session management. Latency → 10–20 ms, CPU drops, no Python runtime in
-  the audio path. This artifact is also the entry ticket to Windows (APO) later.
+  the audio path. This artifact is also the entry ticket to a Windows APO, which would replace the VB-CABLE dependency.
 
 ---
 

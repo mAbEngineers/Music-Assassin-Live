@@ -3,6 +3,8 @@
 Written 2026-08-13. Covers the Windows/mobile packaging investigation and
 the scaffolding built from it.
 
+> **Status 2026-10-31: shipped.** Windows is released (v0.1.5) and audio has been confirmed on real hardware. The current record is `packaging/windows/README.md`; this file is the investigation history only.
+>
 > **Status 2026-08-20.** The investigation below still stands and is worth
 > reading — it is the record of why VB-CABLE, why not Synchronous Audio
 > Router, and why Inno Setup 6.4.3. Three things in it are now out of date:
@@ -24,7 +26,7 @@ the scaffolding built from it.
   system audio at all. Full detail already lives in
   `docs/ARCHITECTURE.md` §6 and `Music-Assassin/docs/REALTIME_MUSIC_REMOVAL_BUILD_GUIDE.md`
   §10–11 — nothing new to hand over here, this was research only, no code.
-- **Windows** — in progress. Unlike mobile, nothing about Windows is
+- **Windows** — shipped in v0.1.5 (was in progress when this was written). Unlike mobile, nothing about Windows is
   OS-blocked: WASAPI loopback capture is open to any app, no opt-in needed.
   The gap is entirely engineering + one licensing question. Rest of this doc
   covers that.

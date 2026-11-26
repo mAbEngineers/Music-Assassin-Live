@@ -48,15 +48,19 @@ weight bytes, not node count, over a large fixed floor — is in §5 there.
 
 ## Where the code is
 
-**Corrected 2026-10-31; everything below this block about branches that
-predates it is history.** `main` is at `939d307` on GitHub
+**Updated 2026-10-31 evening: `main` and `dev` are both at `1e35246`
+(then docs commits), v0.1.5 is released with the `.deb` and the Windows
+`.exe`, and v0.1.4 has its own release. The table below is the earlier
+2026-10-31 snapshot and its `main` SHA and "untested" wording are superseded.**
+Corrected 2026-10-31; everything below this block about branches that
+predates it is history. `main` is at `939d307` on GitHub
 (was `043f858`): the live-app work (StemgenRT, MRX, the stall fixes, the
 icon, 0.1.5) is on `main`, and the revamped README with it. Branches now:
 
 | Branch | State |
 |---|---|
 | `feat/stemgen-default` | `stemgen` as default pipeline (`31c5486`, handover `7090005`). Merged into `main` and `dev`, pushed. Can be deleted. |
-| `main` | `939d307`, pushed 2026-10-31. **Contains the Windows work too**: the stemgen branch had `origin/dev` merged into it by another session at 12:09, and `main` was fast-forwarded to that, so `feature/windows-backend` (and so PR #3) is effectively in. Kept on purpose after the user said not to revert. Windows is still untested on real hardware; the README says so. 0.1.5 in `__version__`; last release still **v0.1.3**, `v0.1.4` only a local tag on `d1cfbe1`. |
+| `main` | `939d307`, pushed 2026-10-31. **Contains the Windows work too**: the stemgen branch had `origin/dev` merged into it by another session at 12:09, and `main` was fast-forwarded to that, so `feature/windows-backend` (and so PR #3) is effectively in. Kept on purpose after the user said not to revert. Windows has since been run on real hardware and is released (v0.1.5). Latest release is now **v0.1.5**; `v0.1.4` is published on `d1cfbe1`. |
 | `feat/separator-spike` | Deleted 2026-10-31 (local and GitHub); it equalled the old `main`, `06e696c`. |
 | `dev` | Same tree as `main` (`f4c9b51`, merges `main` in). Where Windows work continues. Pushed. |
 | `feature/windows-backend` | 11 commits, now inside `main` and `dev`. Draft PR #3 is effectively merged; close or mark it as such on GitHub. |
@@ -1123,11 +1127,28 @@ now copies them in under the names the registry looks up.
   failed 5 of 11 runs, and the pre-2026-10-31 code failed it too, so it is
   not a regression. Fix when convenient: wait for the engine's lag state to
   report done instead of a fixed window.
-- **Not done / waiting on the user:** install the rebuilt .deb
-  (`sudo dpkg -i`, the agent cannot sudo; the installed 0.1.5 still defaults
-  to `dpdfnet_hr` until then); real-use check of
-  the resync and output label; hidden-sink redesign (proposed, not started);
-  v0.1.4 and v0.1.5 tags and releases not pushed.
+- **A local .deb was built 2026-10-31 13:00** from a `git archive` of `main` at
+  `939d307`: 83 MB, version 0.1.5, at `~/music-assassin-live_0.1.5_amd64.deb`
+  (binary plus `stemgen_rt_vocals.onnx` and its licence, checked with
+  `dpkg-deb`). It was written before v0.1.5 was tagged and released on
+  `1e35246`, so **it is not the released v0.1.5** even though the version
+  string is the same. Prefer the release asset; the local file exists only
+  because the agent cannot sudo and the user was going to install it by hand
+  (`sudo dpkg -i`). Either way the installed app has not been launched from a
+  build with the stemgen default, so that default is untested in the running
+  app, and a pipeline already saved in the user's settings overrides it (pick
+  stemgen once). Build recipe: `git archive main | tar -x -C DIR`, symlink the
+  repo `.venv` into DIR, `BUILD_DIR=LOCALDIR bash scripts/build_deb.sh`; about
+  15 minutes under heavy CPU load.
+- **Not done / waiting on the user:** install a .deb with the stemgen default;
+  real-use check of the resync and output label; hidden-sink redesign
+  (proposed, not started). The v0.1.4 and v0.1.5 tags and releases are done
+  (see the top of this file).
+- **Shared working copy.** More than one session works in this repo at once,
+  and they share the same checkout and branch names. On 2026-10-31 another
+  session added commits to a branch of mine with the same name and pushed to
+  `main` mid-command, so two of my pushes were rejected. Use your own worktree
+  and a unique branch name, and `git fetch` before any push to `main`.
 - **Environment reminders.** Repo is on an sftp mount: write commit messages to
   a local file and use `git commit -F`, with `commit-tree` plus `update-ref` as
   the fallback; build the .deb from a local copy with `BUILD_DIR`.
